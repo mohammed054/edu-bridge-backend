@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/authMiddleware');
+const { verifyToken, authorize } = require('../middleware/authMiddleware');
 const {
   getFeedbackOptions,
   generateFeedback,
@@ -8,7 +8,7 @@ const {
   addReply,
 } = require('../controllers/feedbackController');
 
-router.use(authenticate);
+router.use(verifyToken);
 
 router.get('/options', authorize('teacher', 'admin'), getFeedbackOptions);
 router.post('/generate', authorize('teacher'), generateFeedback);

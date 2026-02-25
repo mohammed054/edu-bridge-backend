@@ -1,6 +1,6 @@
 const EMAIL_DOMAIN = 'privatemoe.gov.ae';
-const TEACHER_EMAIL_REGEX = /^tum\d+@privatemoe\.gov\.ae$/i;
-const STUDENT_EMAIL_REGEX = /^stum\d+@privatemoe\.gov\.ae$/i;
+const TEACHER_EMAIL_REGEX = /^tum\d*@privatemoe\.gov\.ae$/i;
+const STUDENT_EMAIL_REGEX = /^stum\d*@privatemoe\.gov\.ae$/i;
 
 const normalizeIdentifier = (identifier) => String(identifier || '').trim();
 
@@ -31,11 +31,11 @@ const validateEmailByRole = (role, email) => {
   }
 
   if (role === 'teacher' && !TEACHER_EMAIL_REGEX.test(value)) {
-    return 'Teacher email must start with "tum".';
+    return 'Teacher email must start with tum and end with @privatemoe.gov.ae.';
   }
 
   if (role === 'student' && !STUDENT_EMAIL_REGEX.test(value)) {
-    return 'Student email must start with "stum".';
+    return 'Student email must start with stum and end with @privatemoe.gov.ae.';
   }
 
   return null;

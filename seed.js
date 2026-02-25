@@ -6,6 +6,19 @@ const User = require('./models/User');
 const ClassModel = require('./models/Class');
 
 const SALT_ROUNDS = 10;
+const DEFAULT_CLASS_NAME = process.env.SEED_CLASS_NAME || 'Grade 11 Adv 3';
+
+const requiredSeedSecrets = [
+  'SEED_ADMIN_PASSWORD',
+  'SEED_TEACHER_PASSWORD',
+  'SEED_STUDENT_PASSWORD',
+];
+
+for (const key of requiredSeedSecrets) {
+  if (!process.env[key]) {
+    throw new Error(`${key} is required in .env before running the seed script.`);
+  }
+}
 
 const upsertUser = async ({ role, username, email, name, password, classes }) => {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -26,7 +39,7 @@ const upsertUser = async ({ role, username, email, name, password, classes }) =>
 const seed = async () => {
   await connectDB();
 
-  const className = 'Grade 11 Adv 3';
+  const className = DEFAULT_CLASS_NAME;
   await ClassModel.updateOne(
     { name: className },
     { $setOnInsert: { name: className, grade: '', section: '' } },
@@ -36,24 +49,24 @@ const seed = async () => {
   await upsertUser({
     role: 'admin',
     username: 'admin',
-    name: 'System Admin',
-    password: 'psps26',
+    name: process.env.SEED_ADMIN_NAME || 'System Admin',
+    password: process.env.SEED_ADMIN_PASSWORD,
     classes: [],
   });
 
   await upsertUser({
     role: 'teacher',
-    email: 'tum@privatemoe.gov.ae',
-    name: 'محمود النقيب',
-    password: 'teacheruser1',
+    email: (process.env.SEED_TEACHER_EMAIL || 'tum00000001@privatemoe.gov.ae').toLowerCase(),
+    name: process.env.SEED_TEACHER_NAME || 'Seed Teacher',
+    password: process.env.SEED_TEACHER_PASSWORD,
     classes: [className],
   });
 
   await upsertUser({
     role: 'student',
-    email: 'stum2309230923@privatemoe.gov.ae',
-    name: 'محمد مدثر',
-    password: 'redbanana',
+    email: (process.env.SEED_STUDENT_EMAIL || 'stum00000001@privatemoe.gov.ae').toLowerCase(),
+    name: process.env.SEED_STUDENT_NAME || 'Seed Student',
+    password: process.env.SEED_STUDENT_PASSWORD,
     classes: [className],
   });
 

@@ -7,6 +7,14 @@ const adminRoutes = require('./routes/adminRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
 
 const app = express();
+
+if (!process.env.MONGO_URI) {
+  throw new Error('MONGO_URI is required in .env');
+}
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET is required in .env');
+}
+
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map((value) => value.trim())
   : ['http://localhost:5173', 'http://127.0.0.1:5173'];
@@ -14,6 +22,8 @@ const allowedOrigins = process.env.CORS_ORIGIN
 app.use(
   cors({
     origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 app.use(express.json());
@@ -26,9 +36,13 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/feedback', feedbackRoutes);
 
-app.use((err, req, res, next) => {
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ message: `Route not found: ${req.originalUrl}` });
+});
+
+app.use((err, _req, res, _next) => {
   console.error(err.stack);
-  res.status(500).json({ message: 'Something went wrong!' });
+  res.status(500).json({ message: err.message || 'Something went wrong.' });
 });
 
 const PORT = process.env.PORT || 5000;

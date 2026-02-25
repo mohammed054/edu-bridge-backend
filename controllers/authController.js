@@ -7,6 +7,15 @@ const {
   detectRoleFromEmail,
 } = require('../utils/userValidation');
 
+const resolveJwtOptions = () => {
+  const raw = String(process.env.JWT_EXPIRES_IN || '').trim().toLowerCase();
+  if (!raw || raw === '0' || raw === 'false' || raw === 'none' || raw === 'off') {
+    return undefined;
+  }
+
+  return { expiresIn: process.env.JWT_EXPIRES_IN };
+};
+
 const signToken = (user) =>
   jwt.sign(
     {
@@ -14,7 +23,7 @@ const signToken = (user) =>
       role: user.role,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    resolveJwtOptions()
   );
 
 const buildAuthResponse = (user) => ({
@@ -36,7 +45,7 @@ const login = async (req, res) => {
 
     if (normalizedIdentifier === 'admin') {
       user = await User.findOne({ role: 'admin', username: 'admin' });
-    } else {
+    } else if (normalizedIdentifier.includes('@')) {
       const normalizedEmail = normalizeEmail(identifier);
       const role = detectRoleFromEmail(normalizedEmail);
 
@@ -48,6 +57,8 @@ const login = async (req, res) => {
       }
 
       user = await User.findOne({ email: normalizedEmail, role });
+    } else {
+      user = await User.findOne({ username: normalizedIdentifier });
     }
 
     if (!user) {

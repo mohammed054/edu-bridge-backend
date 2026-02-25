@@ -10,11 +10,11 @@ const {
   removeStudent,
   removeClass,
 } = require('../controllers/adminController');
-const { authenticate, authorize } = require('../middleware/authMiddleware');
+const { verifyToken, authorize } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.use(authenticate, authorize('admin'));
+router.use(verifyToken, authorize('admin'));
 
 router.get('/overview', listOverview);
 router.post('/import-users', importUsers);
