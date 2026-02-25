@@ -43,7 +43,7 @@ const seed = async () => {
 
   await upsertUser({
     role: 'teacher',
-    email: 'tum23092039@privatemoe.gov.ae',
+    email: 'tum@privatemoe.gov.ae',
     name: 'محمود النقيب',
     password: 'teacheruser1',
     classes: [className],
