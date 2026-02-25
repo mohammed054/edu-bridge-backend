@@ -1,8 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { createFeedback, getFeedbacksByStudent } = require('../controllers/feedbackController');
+const {
+  getFeedbackOptions,
+  generateFeedback,
+  listFeedbacks,
+  addReply,
+} = require('../controllers/feedbackController');
 
-router.post('/', createFeedback);
-router.get('/student/:studentId', getFeedbacksByStudent);
+router.get('/options', getFeedbackOptions);
+router.post('/generate', generateFeedback);
+router.get('/list', listFeedbacks);
+router.post('/reply', addReply);
 
 module.exports = router;
