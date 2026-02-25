@@ -1,5 +1,31 @@
 const mongoose = require('mongoose');
 
+const examMarkSchema = new mongoose.Schema(
+  {
+    subject: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    score: {
+      type: Number,
+      required: true,
+      min: 0,
+      max: 100,
+    },
+    teacherId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     username: {
@@ -34,6 +60,20 @@ const userSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    absentDays: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    negativeReports: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    examMarks: {
+      type: [examMarkSchema],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -48,6 +88,9 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     name: this.name,
     role: this.role,
     classes: this.classes || [],
+    absentDays: this.absentDays || 0,
+    negativeReports: this.negativeReports || 0,
+    examMarks: this.examMarks || [],
   };
 };
 

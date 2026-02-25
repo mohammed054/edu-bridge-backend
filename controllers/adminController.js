@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const ClassModel = require('../models/Class');
 const User = require('../models/User');
+const { buildAdminReports } = require('../services/reportService');
 const {
   normalizeEmail,
   normalizeIdentifier,
@@ -77,10 +78,21 @@ const listOverview = async (_req, res) => {
         name: item.name,
         email: item.email,
         classes: item.classes || [],
+        absentDays: Number(item.absentDays || 0),
+        negativeReports: Number(item.negativeReports || 0),
       })),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to load admin overview.' });
+  }
+};
+
+const getReports = async (_req, res) => {
+  try {
+    const reports = await buildAdminReports();
+    return res.json(reports);
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to build admin reports.' });
   }
 };
 
@@ -296,6 +308,7 @@ const exportUsers = async (_req, res) => {
 
 module.exports = {
   listOverview,
+  getReports,
   importUsers,
   exportUsers,
   addTeacher,

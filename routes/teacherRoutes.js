@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getTeachers, createTeacher } = require('../controllers/teacherController');
+const { verifyToken, authorize } = require('../middleware/authMiddleware');
+const { getTeacherExams, upsertExamMark } = require('../controllers/teacherExamController');
 
-router.get('/', getTeachers);
-router.post('/', createTeacher);
+router.use(verifyToken, authorize('teacher'));
+router.get('/exams', getTeacherExams);
+router.patch('/exams', upsertExamMark);
 
 module.exports = router;

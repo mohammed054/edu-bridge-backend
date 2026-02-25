@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   listOverview,
+  getReports,
   importUsers,
   exportUsers,
   addTeacher,
@@ -17,6 +18,7 @@ const router = express.Router();
 router.use(verifyToken, authorize('admin'));
 
 router.get('/overview', listOverview);
+router.get('/reports', getReports);
 router.post('/import-users', importUsers);
 router.get('/export-users', exportUsers);
 

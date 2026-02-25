@@ -5,6 +5,8 @@ const { connectDB } = require('./db');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
+const profileRoutes = require('./routes/profileRoutes');
+const teacherRoutes = require('./routes/teacherRoutes');
 
 const app = express();
 
@@ -35,6 +37,8 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/teacher', teacherRoutes);
 
 app.use('/api/*', (req, res) => {
   res.status(404).json({ message: `Route not found: ${req.originalUrl}` });
@@ -45,7 +49,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ message: err.message || 'Something went wrong.' });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || process.env.port || 5000;
 
 connectDB().then(() => {
   app.listen(PORT, () => {
