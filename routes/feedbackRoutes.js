@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/authMiddleware');
 const {
   getFeedbackOptions,
   generateFeedback,
@@ -7,9 +8,11 @@ const {
   addReply,
 } = require('../controllers/feedbackController');
 
-router.get('/options', getFeedbackOptions);
-router.post('/generate', generateFeedback);
-router.get('/list', listFeedbacks);
-router.post('/reply', addReply);
+router.use(authenticate);
+
+router.get('/options', authorize('teacher', 'admin'), getFeedbackOptions);
+router.post('/generate', authorize('teacher'), generateFeedback);
+router.get('/list', authorize('teacher', 'student', 'admin'), listFeedbacks);
+router.post('/reply', authorize('student'), addReply);
 
 module.exports = router;

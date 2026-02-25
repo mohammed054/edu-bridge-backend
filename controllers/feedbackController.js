@@ -1,7 +1,6 @@
-const ClassModel = require('../models/Class');
+﻿const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
-const Student = require('../models/Student');
-const Teacher = require('../models/Teacher');
+const User = require('../models/User');
 
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
@@ -87,21 +86,14 @@ const resolveStudentAndClass = async ({ studentName, className }) => {
     throw new Error('No class is available. Seed data first.');
   }
 
-  let student = await Student.findOne({
+  const student = await User.findOne({
+    role: 'student',
     name: new RegExp(`^${escapeRegExp(studentName.trim())}$`, 'i'),
-    classId: targetClass._id,
+    classes: targetClass.name,
   });
 
   if (!student) {
-    const normalized = studentName.toLowerCase().replace(/[^a-z0-9]+/gi, '.');
-    const timestamp = Date.now();
-    student = await Student.create({
-      name: studentName.trim(),
-      email: `${normalized}.${timestamp}@student.local`,
-      studentId: `S-AUTO-${timestamp}`,
-      classId: targetClass._id,
-      guardianName: '',
-    });
+    throw new Error('Student not found in selected class.');
   }
 
   return { student, targetClass };
@@ -110,8 +102,7 @@ const resolveStudentAndClass = async ({ studentName, className }) => {
 const getFeedbackOptions = async (_req, res) => {
   try {
     const classes = await ClassModel.find().sort({ createdAt: 1 }).lean();
-    const classIds = classes.map((item) => item._id);
-    const students = await Student.find({ classId: { $in: classIds } }).sort({ name: 1 }).lean();
+    const students = await User.find({ role: 'student' }).sort({ name: 1 }).lean();
 
     const payload = classes.map((item) => ({
       id: item._id,
@@ -119,11 +110,11 @@ const getFeedbackOptions = async (_req, res) => {
       grade: item.grade,
       section: item.section,
       students: students
-        .filter((student) => String(student.classId) === String(item._id))
+        .filter((student) => (student.classes || []).includes(item.name))
         .map((student) => ({
           id: student._id,
           name: student.name,
-          studentId: student.studentId,
+          email: student.email,
         })),
     }));
 
@@ -141,7 +132,6 @@ const generateFeedback = async (req, res) => {
       notes = '',
       senderType = 'teacher',
       className = 'Grade 11 Adv 3',
-      teacherName = 'Teacher',
       suggestion = '',
     } = req.body || {};
 
@@ -153,9 +143,7 @@ const generateFeedback = async (req, res) => {
     }
 
     const { student, targetClass } = await resolveStudentAndClass({ studentName, className });
-    const teacher = await Teacher.findOne({
-      name: new RegExp(`^${escapeRegExp(teacherName.trim())}$`, 'i'),
-    });
+    const teacherName = req.user?.name || 'Teacher';
 
     let message;
     try {
@@ -170,8 +158,8 @@ const generateFeedback = async (req, res) => {
       studentName: student.name,
       classId: targetClass._id,
       className: targetClass.name,
-      teacherId: teacher?._id || null,
-      teacherName: teacherName || 'Teacher',
+      teacherId: req.user?.id || null,
+      teacherName,
       senderType,
       tags,
       notes,
@@ -190,7 +178,9 @@ const listFeedbacks = async (req, res) => {
     const { studentId, studentName, className } = req.query;
     const query = {};
 
-    if (studentId) {
+    if (req.user.role === 'student') {
+      query.studentId = req.user.id;
+    } else if (studentId) {
       query.studentId = studentId;
     }
     if (studentName) {
@@ -209,9 +199,18 @@ const listFeedbacks = async (req, res) => {
 
 const addReply = async (req, res) => {
   try {
-    const { feedbackId, senderType = 'parent', text } = req.body || {};
+    const { feedbackId, text } = req.body || {};
     if (!feedbackId || !text || !String(text).trim()) {
       return res.status(400).json({ message: 'feedbackId and text are required' });
+    }
+
+    const existing = await Feedback.findById(feedbackId).lean();
+    if (!existing) {
+      return res.status(404).json({ message: 'Feedback not found' });
+    }
+
+    if (String(existing.studentId) !== String(req.user.id)) {
+      return res.status(403).json({ message: 'You can only reply to your own feedback.' });
     }
 
     const feedback = await Feedback.findByIdAndUpdate(
@@ -219,7 +218,7 @@ const addReply = async (req, res) => {
       {
         $push: {
           replies: {
-            senderType,
+            senderType: 'student',
             text: String(text).trim(),
             createdAt: new Date(),
           },
@@ -227,10 +226,6 @@ const addReply = async (req, res) => {
       },
       { new: true }
     ).lean();
-
-    if (!feedback) {
-      return res.status(404).json({ message: 'Feedback not found' });
-    }
 
     return res.json({ feedback });
   } catch (error) {
