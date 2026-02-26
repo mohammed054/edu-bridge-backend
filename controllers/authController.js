@@ -1,10 +1,10 @@
-const bcrypt = require('bcrypt');
+﻿const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const {
   normalizeIdentifier,
   normalizeEmail,
-  detectRoleFromEmail,
+  validateEmailByRole,
 } = require('../utils/userValidation');
 
 const resolveJwtOptions = () => {
@@ -31,55 +31,139 @@ const buildAuthResponse = (user) => ({
   user: user.toSafeObject(),
 });
 
-const login = async (req, res) => {
+const isStudentLoginTestMode = () => {
+  const raw = String(process.env.STUDENT_LOGIN_TEST_MODE || 'true').trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(raw);
+};
+
+const verifyPassword = async (plainPassword, user) => {
+  const value = String(plainPassword || '');
+  if (!value || !user?.passwordHash) {
+    return false;
+  }
+  return bcrypt.compare(value, user.passwordHash);
+};
+
+const loginStudent = async (req, res) => {
   try {
-    const identifier = normalizeIdentifier(req.body?.identifier);
+    const email = normalizeEmail(req.body?.email || req.body?.identifier);
     const password = String(req.body?.password || '');
+    const emailError = validateEmailByRole('student', email);
 
-    if (!identifier || !password) {
-      return res.status(400).json({ message: 'Identifier and password are required.' });
+    if (emailError) {
+      return res.status(400).json({ message: emailError });
     }
 
-    let user = null;
-    const normalizedIdentifier = identifier.toLowerCase();
-
-    if (normalizedIdentifier === 'admin') {
-      user = await User.findOne({ role: 'admin', username: 'admin' });
-    } else if (normalizedIdentifier.includes('@')) {
-      const normalizedEmail = normalizeEmail(identifier);
-      const role = detectRoleFromEmail(normalizedEmail);
-
-      if (!role) {
-        return res.status(400).json({
-          message:
-            'Teacher email must start with tum and student email must start with stum, with domain @privatemoe.gov.ae.',
-        });
-      }
-
-      user = await User.findOne({ email: normalizedEmail, role });
-    } else {
-      user = await User.findOne({ username: normalizedIdentifier });
-    }
-
+    const user = await User.findOne({ role: 'student', email });
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+      return res.status(401).json({ message: 'البريد الإلكتروني غير مسجل كطالب.' });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isPasswordValid) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+    if (!isStudentLoginTestMode()) {
+      const validPassword = await verifyPassword(password, user);
+      if (!validPassword) {
+        return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+      }
     }
 
     return res.json(buildAuthResponse(user));
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Login failed.' });
+    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول الطالب.' });
   }
+};
+
+const loginTeacher = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email || req.body?.identifier);
+    const password = String(req.body?.password || '');
+    const emailError = validateEmailByRole('teacher', email);
+
+    if (emailError) {
+      return res.status(400).json({ message: emailError });
+    }
+    if (!password) {
+      return res.status(400).json({ message: 'كلمة المرور مطلوبة.' });
+    }
+
+    const user = await User.findOne({ role: 'teacher', email });
+    if (!user) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    const validPassword = await verifyPassword(password, user);
+    if (!validPassword) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    return res.json(buildAuthResponse(user));
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول المعلم.' });
+  }
+};
+
+const loginAdmin = async (req, res) => {
+  try {
+    const identifier = normalizeIdentifier(req.body?.identifier || req.body?.email).toLowerCase();
+    const password = String(req.body?.password || '');
+
+    if (!identifier || !password) {
+      return res.status(400).json({ message: 'بيانات الدخول مطلوبة.' });
+    }
+
+    const isEmail = identifier.includes('@');
+    const query = isEmail
+      ? { role: 'admin', email: normalizeEmail(identifier) }
+      : { role: 'admin', username: identifier };
+    const user = await User.findOne(query);
+
+    if (!user) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    const validPassword = await verifyPassword(password, user);
+    if (!validPassword) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    return res.json(buildAuthResponse(user));
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول الإدارة.' });
+  }
+};
+
+const login = async (req, res) => {
+  const portal = String(req.body?.portal || req.body?.loginType || '').trim().toLowerCase();
+
+  if (portal === 'student') {
+    return loginStudent(req, res);
+  }
+
+  if (portal === 'teacher') {
+    return loginTeacher(req, res);
+  }
+
+  if (portal === 'admin') {
+    return loginAdmin(req, res);
+  }
+
+  const identifier = normalizeIdentifier(req.body?.identifier || req.body?.email).toLowerCase();
+  const hasPassword = Boolean(String(req.body?.password || '').trim());
+
+  if (identifier.includes('@') && !hasPassword) {
+    return loginStudent(req, res);
+  }
+
+  if (identifier.includes('@')) {
+    return loginTeacher(req, res);
+  }
+
+  return loginAdmin(req, res);
 };
 
 const getCurrentUser = async (req, res) => {
   const user = await User.findById(req.user.id);
   if (!user) {
-    return res.status(404).json({ message: 'User not found.' });
+    return res.status(404).json({ message: 'المستخدم غير موجود.' });
   }
 
   return res.json({ user: user.toSafeObject() });
@@ -87,5 +171,8 @@ const getCurrentUser = async (req, res) => {
 
 module.exports = {
   login,
+  loginStudent,
+  loginTeacher,
+  loginAdmin,
   getCurrentUser,
 };

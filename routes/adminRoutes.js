@@ -11,6 +11,7 @@ const {
   removeStudent,
   removeClass,
   updateTeacherAssignment,
+  updateStudentAssignment,
 } = require('../controllers/adminController');
 const {
   listAdminSurveys,
@@ -35,6 +36,7 @@ router.patch('/teachers/:id/assignment', updateTeacherAssignment);
 router.delete('/teachers/:id', removeTeacher);
 
 router.post('/students', addStudent);
+router.patch('/students/:id/assignment', updateStudentAssignment);
 router.delete('/students/:id', removeStudent);
 
 router.post('/classes', addClass);

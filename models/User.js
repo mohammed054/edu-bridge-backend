@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+const buildAvatarUrl = (seed) =>
+  `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(seed || 'user')}`;
+
 const examMarkSchema = new mongoose.Schema(
   {
     subject: {
@@ -60,6 +63,11 @@ const userSchema = new mongoose.Schema(
       enum: ['admin', 'teacher', 'student'],
       required: true,
     },
+    avatarUrl: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     classes: {
       type: [String],
       default: [],
@@ -89,12 +97,15 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.methods.toSafeObject = function toSafeObject() {
+  const avatarSeed =
+    this.name || this.email || this.username || (this._id ? String(this._id) : 'user');
   return {
     id: String(this._id),
     username: this.username || '',
     email: this.email || '',
     name: this.name,
     role: this.role,
+    avatarUrl: this.avatarUrl || buildAvatarUrl(avatarSeed),
     classes: this.classes || [],
     subjects: this.subjects || [],
     absentDays: this.absentDays || 0,

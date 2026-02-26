@@ -1,18 +1,23 @@
 const FEEDBACK_CATEGORIES = [
   {
-    key: 'academic',
-    label: 'أكاديمي',
-    options: ['الدرجات', 'المشاركة', 'الواجبات', 'سلوك الامتحان'],
+    key: 'technical_issue',
+    label: 'مشكلة تقنية',
+    options: [],
   },
   {
-    key: 'behavior',
-    label: 'السلوك / الأخلاق',
-    options: ['الانضباط', 'التعاون', 'الاحترام', 'الحضور'],
+    key: 'suggestion',
+    label: 'اقتراح',
+    options: [],
   },
   {
-    key: 'misc',
-    label: 'أخرى / متنوعة',
-    options: ['ملاحظات', 'اقتراحات', 'نصوص حرة'],
+    key: 'complaint',
+    label: 'شكوى',
+    options: [],
+  },
+  {
+    key: 'question',
+    label: 'استفسار',
+    options: [],
   },
 ];
 

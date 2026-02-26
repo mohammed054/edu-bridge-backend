@@ -43,9 +43,8 @@ const feedbackSchema = new mongoose.Schema(
       default: [],
     },
     categoryDetails: {
-      academic: { type: [String], default: [] },
-      behavior: { type: [String], default: [] },
-      misc: { type: [String], default: [] },
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     tags: { type: [String], default: [] },
     notes: { type: String, default: '' },

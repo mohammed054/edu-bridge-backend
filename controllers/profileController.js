@@ -16,7 +16,7 @@ const hasSubjectAccess = (teacherSubjects, subject) =>
 
 const buildMarksAnalysisPlaceholder = (examMarks) => ({
   implemented: false,
-  message: 'تحليل الذكاء الاصطناعي للدرجات غير مفعل حالياً.',
+  message: 'تحليل الدرجات التفصيلي غير مفعل حالياً.',
   marksCount: examMarks.length,
 });
 
@@ -44,21 +44,19 @@ const getStudentProfile = async (req, res) => {
     const targetStudent = await User.findOne({ _id: studentId, role: 'student' }).lean();
 
     if (!targetStudent) {
-      return res.status(404).json({ message: 'Student not found.' });
+      return res.status(404).json({ message: 'الطالب غير موجود.' });
     }
 
     if (req.user.role === 'student' && String(req.user.id) !== String(targetStudent._id)) {
-      return res.status(403).json({ message: 'Students can only access their own profile.' });
+      return res.status(403).json({ message: 'يمكن للطالب الوصول إلى ملفه فقط.' });
     }
 
     if (req.user.role === 'teacher' && !canTeacherAccessStudent(req.user, targetStudent)) {
-      return res
-        .status(403)
-        .json({ message: 'Teachers can only access students assigned to their classes.' });
+      return res.status(403).json({ message: 'يمكن للمعلم الوصول لطلاب صفوفه فقط.' });
     }
 
     if (!['student', 'teacher', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Access denied.' });
+      return res.status(403).json({ message: 'ليس لديك صلاحية الوصول.' });
     }
 
     const feedbackQuery = {
@@ -128,6 +126,7 @@ const getStudentProfile = async (req, res) => {
         name: targetStudent.name,
         email: targetStudent.email || '',
         classes: targetStudent.classes || [],
+        avatarUrl: targetStudent.avatarUrl || '',
       },
       absentDays: Number(targetStudent.absentDays || 0),
       negativeReports: Number(targetStudent.negativeReports || 0),
@@ -158,7 +157,7 @@ const getStudentProfile = async (req, res) => {
 
     return res.json(responsePayload);
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load profile.' });
+    return res.status(500).json({ message: error.message || 'تعذر تحميل الملف الشخصي.' });
   }
 };
 

@@ -1,41 +1,24 @@
-const EMAIL_DOMAIN = 'privatemoe.gov.ae';
-const TEACHER_EMAIL_REGEX = /^tum\d*@privatemoe\.gov\.ae$/i;
-const STUDENT_EMAIL_REGEX = /^stum\d*@privatemoe\.gov\.ae$/i;
+﻿const BASIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+
+const EMAIL_DOMAIN = '';
+const TEACHER_EMAIL_REGEX = BASIC_EMAIL_REGEX;
+const STUDENT_EMAIL_REGEX = BASIC_EMAIL_REGEX;
 
 const normalizeIdentifier = (identifier) => String(identifier || '').trim();
 
 const normalizeEmail = (email) => normalizeIdentifier(email).toLowerCase();
 
-const detectRoleFromEmail = (email) => {
-  const value = normalizeEmail(email);
+const detectRoleFromEmail = () => null;
 
-  if (TEACHER_EMAIL_REGEX.test(value)) {
-    return 'teacher';
-  }
-  if (STUDENT_EMAIL_REGEX.test(value)) {
-    return 'student';
-  }
-  return null;
-};
-
-const validateEmailByRole = (role, email) => {
+const validateEmailByRole = (_role, email) => {
   const value = normalizeEmail(email);
 
   if (!value) {
-    return 'Email is required.';
+    return 'البريد الإلكتروني مطلوب.';
   }
 
-  const domain = value.split('@')[1] || '';
-  if (domain !== EMAIL_DOMAIN) {
-    return `Email domain must be @${EMAIL_DOMAIN}.`;
-  }
-
-  if (role === 'teacher' && !TEACHER_EMAIL_REGEX.test(value)) {
-    return 'Teacher email must start with tum and end with @privatemoe.gov.ae.';
-  }
-
-  if (role === 'student' && !STUDENT_EMAIL_REGEX.test(value)) {
-    return 'Student email must start with stum and end with @privatemoe.gov.ae.';
+  if (!BASIC_EMAIL_REGEX.test(value)) {
+    return 'صيغة البريد الإلكتروني غير صحيحة.';
   }
 
   return null;

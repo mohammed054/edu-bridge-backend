@@ -1,6 +1,7 @@
 const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
 const User = require('../models/User');
+const { HIKMAH_SUBJECTS } = require('../constants/subjects');
 const {
   FEEDBACK_CATEGORIES,
   FEEDBACK_CATEGORY_KEYS,
@@ -23,15 +24,22 @@ const normalizeStringArray = (value) => {
 const normalizeCategories = (value) =>
   normalizeStringArray(value).filter((item) => FEEDBACK_CATEGORY_KEYS.includes(item));
 
-const normalizeCategoryDetails = (value = {}) => ({
-  academic: normalizeStringArray(value.academic),
-  behavior: normalizeStringArray(value.behavior),
-  misc: normalizeStringArray(value.misc),
-});
+const normalizeCategoryDetails = (value = {}) => {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  return Object.entries(value).reduce((acc, [key, list]) => {
+    const cleanKey = asTrimmed(key);
+    if (!cleanKey) {
+      return acc;
+    }
+    acc[cleanKey] = normalizeStringArray(list);
+    return acc;
+  }, {});
+};
 
-const flattenTagsFromDetails = (details) => [
-  ...new Set([...(details.academic || []), ...(details.behavior || []), ...(details.misc || [])]),
-];
+const flattenTagsFromDetails = (details) =>
+  [...new Set(Object.values(details || {}).flatMap((list) => normalizeStringArray(list)))];
 
 const hasSubjectAccess = (teacherSubjects, subject) =>
   (teacherSubjects || []).some(
@@ -40,9 +48,9 @@ const hasSubjectAccess = (teacherSubjects, subject) =>
 
 const buildFallbackMessage = (studentName, subject, categories, notes) => {
   const labels = categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).filter(Boolean);
-  const summary = labels.length ? labels.join('، ') : 'تقييم عام';
-  const notesLine = notes ? `ملاحظة إضافية: ${notes}.` : '';
-  return `عزيزي/عزيزتي ${studentName}، تم تسجيل تغذية راجعة في مادة ${subject} ضمن ${summary}. ${notesLine}`.trim();
+  const summary = labels.length ? labels.join('، ') : 'متابعة عامة';
+  const notesLine = notes ? ` ملاحظة إضافية: ${notes}.` : '';
+  return `تم تسجيل تغذية راجعة للطالب/ة ${studentName} في مادة ${subject} ضمن فئة ${summary}.${notesLine}`.trim();
 };
 
 const generateArabicMessageWithAI = async ({
@@ -54,20 +62,23 @@ const generateArabicMessageWithAI = async ({
   senderType,
 }) => {
   if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error('OpenRouter API key is missing');
+    throw new Error('مفتاح خدمة الذكاء الاصطناعي غير متوفر.');
   }
 
+  const detailsText = Object.entries(categoryDetails || {})
+    .map(([key, values]) => `${key}: ${(values || []).join('، ') || 'لا يوجد'}`)
+    .join('\n');
+
   const systemPrompt =
-    'أنت مساعد تربوي محترف. اكتب رسالة تغذية راجعة عربية قصيرة (2-3 جمل) مهنية ومحددة وواضحة.';
+    'أنت مساعد تربوي محترف. اكتب رسالة تغذية راجعة عربية قصيرة ومهنية وواضحة للطالب والأسرة.';
   const userPrompt = `اسم الطالب: ${studentName}
 نوع المرسل: ${senderType}
 المادة: ${subject}
-التصنيفات: ${categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).join('، ') || 'بدون'}
-تفاصيل أكاديمية: ${categoryDetails.academic.join('، ') || 'لا يوجد'}
-تفاصيل السلوك/الأخلاق: ${categoryDetails.behavior.join('، ') || 'لا يوجد'}
-تفاصيل متنوعة: ${categoryDetails.misc.join('، ') || 'لا يوجد'}
+الفئات: ${categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).join('، ') || 'بدون'}
+تفاصيل الفئات:
+${detailsText || 'لا يوجد'}
 ملاحظات إضافية: ${notes || 'لا يوجد'}
-اكتب رسالة مناسبة للأسرة والطالب.`;
+اكتب الرسالة بجملتين أو ثلاث جمل فقط.`;
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: 'POST',
@@ -75,7 +86,7 @@ const generateArabicMessageWithAI = async ({
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost:5000',
-      'X-Title': 'Edu Bridge Feedback Platform',
+      'X-Title': 'Hikmah School Platform',
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
@@ -90,13 +101,13 @@ const generateArabicMessageWithAI = async ({
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter request failed: ${errorText}`);
+    throw new Error(`تعذر توليد الرسالة: ${errorText}`);
   }
 
   const data = await response.json();
   const text = data?.choices?.[0]?.message?.content?.trim();
   if (!text) {
-    throw new Error('OpenRouter returned empty content');
+    throw new Error('لم يتم توليد نص مناسب.');
   }
 
   return text;
@@ -107,7 +118,6 @@ const parseFeedbackTypes = (query) => {
   if (!rawTypes) {
     return [];
   }
-
   return [...new Set(rawTypes.split(',').map((item) => item.trim()).filter(Boolean))];
 };
 
@@ -160,10 +170,11 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   }
 
   if (!student) {
-    throw new Error('Student not found.');
+    throw new Error('الطالب غير موجود.');
   }
 
-  const preferredClassNames = [className, ...(student.classes || [])].filter(Boolean);
+  const studentClass = (student.classes || [])[0] || '';
+  const preferredClassNames = [className, studentClass].filter(Boolean);
   let targetClass = null;
 
   for (const candidate of preferredClassNames) {
@@ -175,11 +186,7 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   }
 
   if (!targetClass) {
-    targetClass = await ClassModel.findOne().sort({ createdAt: 1 });
-  }
-
-  if (!targetClass) {
-    throw new Error('No class is available. Seed data first.');
+    throw new Error('لا يوجد صف مرتبط بالطالب.');
   }
 
   return { student, targetClass };
@@ -218,6 +225,7 @@ const getFeedbackOptions = async (req, res) => {
           id: String(student._id),
           name: student.name,
           email: student.email,
+          avatarUrl: student.avatarUrl || '',
         })),
       teachers: teachers
         .filter((teacher) => (teacher.classes || []).includes(item.name))
@@ -225,36 +233,33 @@ const getFeedbackOptions = async (req, res) => {
           id: String(teacher._id),
           name: teacher.name,
           email: teacher.email,
+          avatarUrl: teacher.avatarUrl || '',
           subjects: teacher.subjects || [],
+          subject: teacher.subjects?.[0] || '',
         })),
     }));
 
-    const admins = await User.find({ role: 'admin' }, { name: 1, username: 1, email: 1 }).lean();
+    const admins = await User.find({ role: 'admin' }, { name: 1, username: 1, email: 1, avatarUrl: 1 }).lean();
 
-    const defaultSubjectsByRole = {
-      admin: [...new Set(teachers.flatMap((teacher) => teacher.subjects || []))],
+    const subjectsByRole = {
+      admin: HIKMAH_SUBJECTS,
       teacher: req.user.subjects || [],
-      student: [
-        ...new Set(
-          teachers
-            .filter((teacher) => ensureSharedClass(req.user.classes || [], teacher.classes || []))
-            .flatMap((teacher) => teacher.subjects || [])
-        ),
-      ],
+      student: HIKMAH_SUBJECTS,
     };
 
     return res.json({
       classes: payload,
       admins: admins.map((admin) => ({
         id: String(admin._id),
-        name: admin.name || admin.username || 'Admin',
+        name: admin.name || admin.username || 'الإدارة',
         email: admin.email || '',
+        avatarUrl: admin.avatarUrl || '',
       })),
       categories: FEEDBACK_CATEGORIES,
-      subjects: defaultSubjectsByRole[req.user.role] || [],
+      subjects: subjectsByRole[req.user.role] || HIKMAH_SUBJECTS,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load options.' });
+    return res.status(500).json({ message: error.message || 'تعذر تحميل خيارات التغذية الراجعة.' });
   }
 };
 
@@ -280,13 +285,13 @@ const generateFeedback = async (req, res) => {
     const normalizedContent = asTrimmed(content);
 
     if (!studentName && !studentId) {
-      return res.status(400).json({ message: 'studentName or studentId is required.' });
+      return res.status(400).json({ message: 'يجب تحديد الطالب.' });
     }
     if (!normalizedSubject) {
-      return res.status(400).json({ message: 'subject is required.' });
+      return res.status(400).json({ message: 'المادة مطلوبة.' });
     }
     if (!normalizedCategories.length) {
-      return res.status(400).json({ message: 'At least one category is required.' });
+      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
     }
 
     const { student, targetClass } = await resolveStudentAndClass({ studentId, studentName, className });
@@ -296,19 +301,15 @@ const generateFeedback = async (req, res) => {
       req.user.classes?.length &&
       !req.user.classes.includes(targetClass.name)
     ) {
-      return res
-        .status(403)
-        .json({ message: 'Teachers can only send feedback to students in their classes.' });
+      return res.status(403).json({ message: 'يمكن للمعلم الإرسال لطلابه فقط.' });
     }
 
     if (req.user.role === 'teacher' && !hasSubjectAccess(req.user.subjects || [], normalizedSubject)) {
-      return res
-        .status(403)
-        .json({ message: 'Teachers can only send feedback in their assigned subjects.' });
+      return res.status(403).json({ message: 'يمكن للمعلم الإرسال في مادته فقط.' });
     }
 
     const senderRole = req.user.role === 'admin' ? 'admin' : 'teacher';
-    const senderName = req.user?.name || (senderRole === 'admin' ? 'Admin' : 'Teacher');
+    const senderName = req.user?.name || (senderRole === 'admin' ? 'الإدارة' : 'المعلم');
 
     let message = normalizedContent;
     if (!message && suggestAi) {
@@ -363,7 +364,7 @@ const generateFeedback = async (req, res) => {
       feedback: created,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to generate feedback.' });
+    return res.status(500).json({ message: error.message || 'تعذر إنشاء التغذية الراجعة.' });
   }
 };
 
@@ -377,11 +378,11 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     const notes = asTrimmed(req.body?.notes);
     const feedbackType = 'student_to_teacher';
 
-    if (!teacherId || !content || !subject) {
-      return res.status(400).json({ message: 'teacherId, content, and subject are required.' });
+    if (!teacherId || !subject) {
+      return res.status(400).json({ message: 'المعلم والمادة حقول مطلوبة.' });
     }
     if (!categories.length) {
-      return res.status(400).json({ message: 'At least one category is required.' });
+      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
     }
 
     const [student, teacher] = await Promise.all([
@@ -390,20 +391,16 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     ]);
 
     if (!student) {
-      return res.status(404).json({ message: 'Student account not found.' });
+      return res.status(404).json({ message: 'حساب الطالب غير موجود.' });
     }
     if (!teacher) {
-      return res.status(404).json({ message: 'Teacher not found.' });
+      return res.status(404).json({ message: 'المعلم غير موجود.' });
     }
     if (!ensureSharedClass(student.classes || [], teacher.classes || [])) {
-      return res
-        .status(403)
-        .json({ message: 'You can only send feedback to teachers assigned to your class.' });
+      return res.status(403).json({ message: 'يمكنك الإرسال لمعلمي صفك فقط.' });
     }
     if (!hasSubjectAccess(teacher.subjects || [], subject)) {
-      return res
-        .status(403)
-        .json({ message: 'Selected subject is not assigned to this teacher.' });
+      return res.status(403).json({ message: 'المادة غير مرتبطة بهذا المعلم.' });
     }
 
     const className =
@@ -411,6 +408,9 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       (student.classes || []).find((classItem) => (teacher.classes || []).includes(classItem)) ||
       '';
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
+
+    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || 'تغذية راجعة';
+    const resolvedContent = content || `تم إرسال ${firstCategoryLabel} من الطالب.`;
 
     const feedback = await Feedback.create({
       studentId: student._id,
@@ -430,16 +430,14 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       categoryDetails,
       tags: flattenTagsFromDetails(categoryDetails),
       notes,
-      message: content,
-      content,
+      message: resolvedContent,
+      content: resolvedContent,
       timestamp: new Date(),
     });
 
     return res.status(201).json({ feedback });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: error.message || 'Failed to submit student-to-teacher feedback.' });
+    return res.status(500).json({ message: error.message || 'تعذر إرسال التغذية الراجعة للمعلم.' });
   }
 };
 
@@ -453,16 +451,16 @@ const submitStudentToAdminFeedback = async (req, res) => {
     const notes = asTrimmed(req.body?.notes);
     const feedbackType = 'student_to_admin';
 
-    if (!content || !subject) {
-      return res.status(400).json({ message: 'content and subject are required.' });
+    if (!subject) {
+      return res.status(400).json({ message: 'المادة حقل مطلوب.' });
     }
     if (!categories.length) {
-      return res.status(400).json({ message: 'At least one category is required.' });
+      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
     }
 
     const student = await User.findOne({ _id: req.user.id, role: 'student' });
     if (!student) {
-      return res.status(404).json({ message: 'Student account not found.' });
+      return res.status(404).json({ message: 'حساب الطالب غير موجود.' });
     }
 
     const adminQuery = requestedAdminId
@@ -470,11 +468,14 @@ const submitStudentToAdminFeedback = async (req, res) => {
       : { role: 'admin' };
     const admin = await User.findOne(adminQuery).sort({ createdAt: 1 });
     if (!admin) {
-      return res.status(404).json({ message: 'Admin not found.' });
+      return res.status(404).json({ message: 'حساب الإدارة غير موجود.' });
     }
 
     const className = asTrimmed(req.body?.className) || (student.classes || [])[0] || '';
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
+
+    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || 'تغذية راجعة';
+    const resolvedContent = content || `تم إرسال ${firstCategoryLabel} من الطالب.`;
 
     const feedback = await Feedback.create({
       studentId: student._id,
@@ -482,7 +483,7 @@ const submitStudentToAdminFeedback = async (req, res) => {
       classId: classItem?._id || null,
       className,
       adminId: admin._id,
-      adminName: admin.name || admin.username || 'Admin',
+      adminName: admin.name || admin.username || 'الإدارة',
       senderId: student._id,
       senderRole: 'student',
       senderType: 'student',
@@ -494,16 +495,14 @@ const submitStudentToAdminFeedback = async (req, res) => {
       categoryDetails,
       tags: flattenTagsFromDetails(categoryDetails),
       notes,
-      message: content,
-      content,
+      message: resolvedContent,
+      content: resolvedContent,
       timestamp: new Date(),
     });
 
     return res.status(201).json({ feedback });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: error.message || 'Failed to submit student-to-admin feedback.' });
+    return res.status(500).json({ message: error.message || 'تعذر إرسال التغذية الراجعة للإدارة.' });
   }
 };
 
@@ -570,7 +569,7 @@ const listFeedbacks = async (req, res) => {
 
     return res.json({ feedbacks });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to fetch feedbacks.' });
+    return res.status(500).json({ message: error.message || 'تعذر تحميل سجل التغذية الراجعة.' });
   }
 };
 
@@ -580,16 +579,16 @@ const addReply = async (req, res) => {
     const text = asTrimmed(req.body?.text);
 
     if (!feedbackId || !text) {
-      return res.status(400).json({ message: 'feedbackId and text are required.' });
+      return res.status(400).json({ message: 'المعرف ونص الرد حقول مطلوبة.' });
     }
 
     const existing = await Feedback.findById(feedbackId).lean();
     if (!existing) {
-      return res.status(404).json({ message: 'Feedback not found.' });
+      return res.status(404).json({ message: 'التغذية الراجعة غير موجودة.' });
     }
 
     if (String(existing.studentId) !== String(req.user.id)) {
-      return res.status(403).json({ message: 'You can only reply to your own feedback.' });
+      return res.status(403).json({ message: 'يمكنك الرد على الرسائل الخاصة بك فقط.' });
     }
 
     const feedback = await Feedback.findByIdAndUpdate(
@@ -608,7 +607,7 @@ const addReply = async (req, res) => {
 
     return res.json({ feedback });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to add reply.' });
+    return res.status(500).json({ message: error.message || 'تعذر إرسال الرد.' });
   }
 };
 

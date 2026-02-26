@@ -57,7 +57,7 @@ const getTeacherExams = async (req, res) => {
 
     return res.json({ classes: grouped, subjects: teacherSubjects });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load teacher exams.' });
+    return res.status(500).json({ message: error.message || 'تعذر تحميل بيانات الاختبارات.' });
   }
 };
 
@@ -68,27 +68,27 @@ const upsertExamMark = async (req, res) => {
     const score = Number(req.body?.score);
 
     if (!studentId || !subject || Number.isNaN(score)) {
-      return res.status(400).json({ message: 'studentId, subject, and score are required.' });
+      return res.status(400).json({ message: 'الطالب والمادة والدرجة حقول مطلوبة.' });
     }
 
     if (score < 0 || score > 100) {
-      return res.status(400).json({ message: 'Score must be between 0 and 100.' });
+      return res.status(400).json({ message: 'الدرجة يجب أن تكون بين 0 و100.' });
     }
 
     if (!hasSubjectAccess(req.user.subjects || [], subject)) {
-      return res.status(403).json({ message: 'You can only manage marks in your assigned subjects.' });
+      return res.status(403).json({ message: 'يمكنك إدارة درجات مادتك فقط.' });
     }
 
     const student = await User.findOne({ _id: studentId, role: 'student' });
     if (!student) {
-      return res.status(404).json({ message: 'Student not found.' });
+      return res.status(404).json({ message: 'الطالب غير موجود.' });
     }
 
     const teacherClasses = req.user.classes || [];
     if (!hasClassAccess(teacherClasses, student.classes || [])) {
       return res
         .status(403)
-        .json({ message: 'You can only update marks for students in your classes.' });
+        .json({ message: 'يمكنك تعديل درجات طلاب صفوفك فقط.' });
     }
 
     const existingIndex = (student.examMarks || []).findIndex(
@@ -112,11 +112,11 @@ const upsertExamMark = async (req, res) => {
     await student.save();
 
     return res.json({
-      message: 'Exam mark updated successfully.',
+      message: 'تم تحديث الدرجة بنجاح.',
       student: mapStudentForExamPanel(student.toObject()),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update exam mark.' });
+    return res.status(500).json({ message: error.message || 'تعذر تحديث الدرجة.' });
   }
 };
 
@@ -126,23 +126,23 @@ const deleteExamMark = async (req, res) => {
     const subject = normalizeSubject(req.body?.subject);
 
     if (!studentId || !subject) {
-      return res.status(400).json({ message: 'studentId and subject are required.' });
+      return res.status(400).json({ message: 'الطالب والمادة حقول مطلوبة.' });
     }
 
     if (!hasSubjectAccess(req.user.subjects || [], subject)) {
-      return res.status(403).json({ message: 'You can only manage marks in your assigned subjects.' });
+      return res.status(403).json({ message: 'يمكنك إدارة درجات مادتك فقط.' });
     }
 
     const student = await User.findOne({ _id: studentId, role: 'student' });
     if (!student) {
-      return res.status(404).json({ message: 'Student not found.' });
+      return res.status(404).json({ message: 'الطالب غير موجود.' });
     }
 
     const teacherClasses = req.user.classes || [];
     if (!hasClassAccess(teacherClasses, student.classes || [])) {
       return res
         .status(403)
-        .json({ message: 'You can only update marks for students in your classes.' });
+        .json({ message: 'يمكنك تعديل درجات طلاب صفوفك فقط.' });
     }
 
     const initialLength = (student.examMarks || []).length;
@@ -151,17 +151,17 @@ const deleteExamMark = async (req, res) => {
     );
 
     if (student.examMarks.length === initialLength) {
-      return res.status(404).json({ message: 'Mark not found for this subject.' });
+      return res.status(404).json({ message: 'لا توجد درجة لهذه المادة.' });
     }
 
     await student.save();
 
     return res.json({
-      message: 'Exam mark deleted successfully.',
+      message: 'تم حذف الدرجة بنجاح.',
       student: mapStudentForExamPanel(student.toObject()),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to delete exam mark.' });
+    return res.status(500).json({ message: error.message || 'تعذر حذف الدرجة.' });
   }
 };
 
