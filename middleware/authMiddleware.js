@@ -24,6 +24,7 @@ const verifyToken = async (req, res, next) => {
       username: user.username || '',
       name: user.name,
       classes: user.classes || [],
+      subjects: user.subjects || [],
     };
 
     return next();

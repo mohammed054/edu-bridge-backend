@@ -8,6 +8,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 const teacherRoutes = require("./routes/teacherRoutes");
+const surveyRoutes = require("./routes/surveyRoutes");
 
 const app = express();
 
@@ -76,6 +77,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/teacher", teacherRoutes);
+app.use("/api/surveys", surveyRoutes);
 
 /* ===========================
    404 HANDLER

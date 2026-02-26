@@ -7,6 +7,11 @@ const hasClassAccess = (teacherClasses, studentClasses) => {
   return (studentClasses || []).some((name) => classSet.has(name));
 };
 
+const hasSubjectAccess = (teacherSubjects, subject) =>
+  (teacherSubjects || []).some(
+    (teacherSubject) => String(teacherSubject || '').toLowerCase() === String(subject || '').toLowerCase()
+  );
+
 const mapStudentForExamPanel = (student) => ({
   id: String(student._id),
   name: student.name,
@@ -18,8 +23,10 @@ const mapStudentForExamPanel = (student) => ({
 const getTeacherExams = async (req, res) => {
   try {
     const teacherClasses = req.user.classes || [];
+    const teacherSubjects = req.user.subjects || [];
+
     if (!teacherClasses.length) {
-      return res.json({ classes: [] });
+      return res.json({ classes: [], subjects: teacherSubjects });
     }
 
     const students = await User.find(
@@ -41,10 +48,14 @@ const getTeacherExams = async (req, res) => {
       name: className,
       students: students
         .filter((student) => (student.classes || []).includes(className))
-        .map(mapStudentForExamPanel),
+        .map((student) => {
+          const mapped = mapStudentForExamPanel(student);
+          mapped.examMarks = mapped.examMarks.filter((mark) => hasSubjectAccess(teacherSubjects, mark.subject));
+          return mapped;
+        }),
     }));
 
-    return res.json({ classes: grouped });
+    return res.json({ classes: grouped, subjects: teacherSubjects });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to load teacher exams.' });
   }
@@ -62,6 +73,10 @@ const upsertExamMark = async (req, res) => {
 
     if (score < 0 || score > 100) {
       return res.status(400).json({ message: 'Score must be between 0 and 100.' });
+    }
+
+    if (!hasSubjectAccess(req.user.subjects || [], subject)) {
+      return res.status(403).json({ message: 'You can only manage marks in your assigned subjects.' });
     }
 
     const student = await User.findOne({ _id: studentId, role: 'student' });
@@ -84,6 +99,7 @@ const upsertExamMark = async (req, res) => {
       subject,
       score,
       teacherId: req.user.id,
+      teacherName: req.user.name || '',
       updatedAt: new Date(),
     };
 
@@ -104,7 +120,53 @@ const upsertExamMark = async (req, res) => {
   }
 };
 
+const deleteExamMark = async (req, res) => {
+  try {
+    const studentId = String(req.body?.studentId || '').trim();
+    const subject = normalizeSubject(req.body?.subject);
+
+    if (!studentId || !subject) {
+      return res.status(400).json({ message: 'studentId and subject are required.' });
+    }
+
+    if (!hasSubjectAccess(req.user.subjects || [], subject)) {
+      return res.status(403).json({ message: 'You can only manage marks in your assigned subjects.' });
+    }
+
+    const student = await User.findOne({ _id: studentId, role: 'student' });
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found.' });
+    }
+
+    const teacherClasses = req.user.classes || [];
+    if (!hasClassAccess(teacherClasses, student.classes || [])) {
+      return res
+        .status(403)
+        .json({ message: 'You can only update marks for students in your classes.' });
+    }
+
+    const initialLength = (student.examMarks || []).length;
+    student.examMarks = (student.examMarks || []).filter(
+      (item) => String(item.subject || '').toLowerCase() !== subject.toLowerCase()
+    );
+
+    if (student.examMarks.length === initialLength) {
+      return res.status(404).json({ message: 'Mark not found for this subject.' });
+    }
+
+    await student.save();
+
+    return res.json({
+      message: 'Exam mark deleted successfully.',
+      student: mapStudentForExamPanel(student.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to delete exam mark.' });
+  }
+};
+
 module.exports = {
   getTeacherExams,
   upsertExamMark,
+  deleteExamMark,
 };

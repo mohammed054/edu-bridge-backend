@@ -7,6 +7,10 @@ const ClassModel = require('./models/Class');
 
 const SALT_ROUNDS = 10;
 const DEFAULT_CLASS_NAME = process.env.SEED_CLASS_NAME || 'Grade 11 Adv 3';
+const DEFAULT_TEACHER_SUBJECTS = String(process.env.SEED_TEACHER_SUBJECTS || 'الرياضيات')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
 
 const requiredSeedSecrets = [
   'SEED_ADMIN_PASSWORD',
@@ -20,7 +24,7 @@ for (const key of requiredSeedSecrets) {
   }
 }
 
-const upsertUser = async ({ role, username, email, name, password, classes }) => {
+const upsertUser = async ({ role, username, email, name, password, classes, subjects }) => {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
   const filter = username ? { username } : { email };
@@ -30,6 +34,7 @@ const upsertUser = async ({ role, username, email, name, password, classes }) =>
     email: email || undefined,
     name,
     classes: classes || [],
+    subjects: subjects || [],
     passwordHash,
   };
 
@@ -52,6 +57,7 @@ const seed = async () => {
     name: process.env.SEED_ADMIN_NAME || 'System Admin',
     password: process.env.SEED_ADMIN_PASSWORD,
     classes: [],
+    subjects: [],
   });
 
   await upsertUser({
@@ -60,6 +66,7 @@ const seed = async () => {
     name: process.env.SEED_TEACHER_NAME || 'Seed Teacher',
     password: process.env.SEED_TEACHER_PASSWORD,
     classes: [className],
+    subjects: DEFAULT_TEACHER_SUBJECTS,
   });
 
   await upsertUser({
@@ -68,6 +75,7 @@ const seed = async () => {
     name: process.env.SEED_STUDENT_NAME || 'Seed Student',
     password: process.env.SEED_STUDENT_PASSWORD,
     classes: [className],
+    subjects: [],
   });
 
   console.log('Seed complete: admin + teacher + student created/updated.');

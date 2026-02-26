@@ -1,6 +1,11 @@
 const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
 const User = require('../models/User');
+const {
+  FEEDBACK_CATEGORIES,
+  FEEDBACK_CATEGORY_KEYS,
+  FEEDBACK_CATEGORY_LABEL_BY_KEY,
+} = require('../constants/feedbackCatalog');
 
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
@@ -8,42 +13,61 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const asTrimmed = (value) => String(value || '').trim();
 
-const TAG_FALLBACK_MAP = {
-  'good participation': 'مشاركتك داخل الصف مميزة وتعكس اهتمامك بالتعلم.',
-  'talks too much': 'نحتاج منك تقليل الحديث الجانبي أثناء الشرح لزيادة التركيز.',
-  'academic improvement': 'هناك تحسن أكاديمي واضح خلال الفترة الأخيرة ونشجعك على الاستمرار.',
-  'needs focus': 'من المهم زيادة التركيز في الحصة لتحقيق نتائج أفضل.',
-  'excellent behavior': 'سلوكك داخل الصف ممتاز ويعكس احترامك لبيئة التعلم.',
-  'homework incomplete': 'يرجى الالتزام بتسليم الواجبات في الوقت المحدد.',
+const normalizeStringArray = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((item) => asTrimmed(item)).filter(Boolean))];
 };
 
-const buildFallbackMessage = (studentName, tags, notes) => {
-  const selectedLines = tags
-    .map((tag) => TAG_FALLBACK_MAP[tag])
-    .filter(Boolean)
-    .slice(0, 2);
+const normalizeCategories = (value) =>
+  normalizeStringArray(value).filter((item) => FEEDBACK_CATEGORY_KEYS.includes(item));
 
-  const highlights =
-    selectedLines.length > 0
-      ? selectedLines.join(' ')
-      : 'شكرًا لجهودك داخل الصف. نأمل الاستمرار في التطور الأكاديمي والسلوكي.';
+const normalizeCategoryDetails = (value = {}) => ({
+  academic: normalizeStringArray(value.academic),
+  behavior: normalizeStringArray(value.behavior),
+  misc: normalizeStringArray(value.misc),
+});
 
-  const notesLine = notes ? `ملاحظة المعلم: ${notes.trim()}.` : '';
-  return `عزيزي/عزيزتي ${studentName}، ${highlights} ${notesLine} مع خالص التقدير.`;
+const flattenTagsFromDetails = (details) => [
+  ...new Set([...(details.academic || []), ...(details.behavior || []), ...(details.misc || [])]),
+];
+
+const hasSubjectAccess = (teacherSubjects, subject) =>
+  (teacherSubjects || []).some(
+    (entry) => String(entry || '').toLowerCase() === String(subject || '').toLowerCase()
+  );
+
+const buildFallbackMessage = (studentName, subject, categories, notes) => {
+  const labels = categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).filter(Boolean);
+  const summary = labels.length ? labels.join('، ') : 'تقييم عام';
+  const notesLine = notes ? `ملاحظة إضافية: ${notes}.` : '';
+  return `عزيزي/عزيزتي ${studentName}، تم تسجيل تغذية راجعة في مادة ${subject} ضمن ${summary}. ${notesLine}`.trim();
 };
 
-const generateArabicMessageWithAI = async ({ studentName, tags, notes, senderType }) => {
+const generateArabicMessageWithAI = async ({
+  studentName,
+  subject,
+  categories,
+  categoryDetails,
+  notes,
+  senderType,
+}) => {
   if (!process.env.OPENROUTER_API_KEY) {
     throw new Error('OpenRouter API key is missing');
   }
 
   const systemPrompt =
-    'أنت مساعد تربوي محترف. اكتب رسالة تغذية راجعة عربية قصيرة (2-3 جمل)، دافئة ومهنية ومختصرة، موجهة للطالب وولي الأمر.';
+    'أنت مساعد تربوي محترف. اكتب رسالة تغذية راجعة عربية قصيرة (2-3 جمل) مهنية ومحددة وواضحة.';
   const userPrompt = `اسم الطالب: ${studentName}
 نوع المرسل: ${senderType}
-الوسوم المختارة: ${tags.join('، ') || 'بدون'}
-ملاحظات إضافية: ${notes || 'لا توجد'}
-اكتب رسالة واضحة ومحترمة وتحتوي توجيهًا عمليًا بسيطًا.`;
+المادة: ${subject}
+التصنيفات: ${categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).join('، ') || 'بدون'}
+تفاصيل أكاديمية: ${categoryDetails.academic.join('، ') || 'لا يوجد'}
+تفاصيل السلوك/الأخلاق: ${categoryDetails.behavior.join('، ') || 'لا يوجد'}
+تفاصيل متنوعة: ${categoryDetails.misc.join('، ') || 'لا يوجد'}
+ملاحظات إضافية: ${notes || 'لا يوجد'}
+اكتب رسالة مناسبة للأسرة والطالب.`;
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: 'POST',
@@ -59,8 +83,8 @@ const generateArabicMessageWithAI = async ({ studentName, tags, notes, senderTyp
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.5,
-      max_tokens: 170,
+      temperature: 0.4,
+      max_tokens: 220,
     }),
   });
 
@@ -87,6 +111,8 @@ const parseFeedbackTypes = (query) => {
   return [...new Set(rawTypes.split(',').map((item) => item.trim()).filter(Boolean))];
 };
 
+const parseCategoryFilter = (value) => normalizeCategories(String(value || '').split(','));
+
 const applyRoleScope = (query, reqUser) => {
   if (reqUser.role === 'admin') {
     return query;
@@ -94,16 +120,25 @@ const applyRoleScope = (query, reqUser) => {
 
   if (reqUser.role === 'student') {
     return {
-      $and: [query, { $or: [{ studentId: reqUser.id }, { senderId: reqUser.id }] }],
+      $and: [query, { $or: [{ studentId: reqUser.id }, { senderId: reqUser.id }, { receiverId: reqUser.id }] }],
     };
   }
 
   if (reqUser.role === 'teacher') {
+    const subjects = reqUser.subjects || [];
+    const teacherScope = {
+      $or: [{ teacherId: reqUser.id }, { senderId: reqUser.id }, { receiverId: reqUser.id }],
+    };
+    if (!subjects.length) {
+      return { $and: [query, teacherScope] };
+    }
+
     return {
       $and: [
         query,
+        teacherScope,
         {
-          $or: [{ teacherId: reqUser.id }, { senderId: reqUser.id }, { receiverId: reqUser.id }],
+          $or: [{ subject: { $in: subjects } }, { subject: '' }, { subject: null }],
         },
       ],
     };
@@ -190,10 +225,23 @@ const getFeedbackOptions = async (req, res) => {
           id: String(teacher._id),
           name: teacher.name,
           email: teacher.email,
+          subjects: teacher.subjects || [],
         })),
     }));
 
     const admins = await User.find({ role: 'admin' }, { name: 1, username: 1, email: 1 }).lean();
+
+    const defaultSubjectsByRole = {
+      admin: [...new Set(teachers.flatMap((teacher) => teacher.subjects || []))],
+      teacher: req.user.subjects || [],
+      student: [
+        ...new Set(
+          teachers
+            .filter((teacher) => ensureSharedClass(req.user.classes || [], teacher.classes || []))
+            .flatMap((teacher) => teacher.subjects || [])
+        ),
+      ],
+    };
 
     return res.json({
       classes: payload,
@@ -202,6 +250,8 @@ const getFeedbackOptions = async (req, res) => {
         name: admin.name || admin.username || 'Admin',
         email: admin.email || '',
       })),
+      categories: FEEDBACK_CATEGORIES,
+      subjects: defaultSubjectsByRole[req.user.role] || [],
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to load options.' });
@@ -213,17 +263,30 @@ const generateFeedback = async (req, res) => {
     const {
       studentName,
       studentId,
-      tags = [],
-      notes = '',
       className = '',
+      subject = '',
+      categories = [],
+      categoryDetails = {},
+      notes = '',
       suggestion = '',
+      content = '',
+      suggestAi = true,
     } = req.body || {};
+
+    const normalizedSubject = asTrimmed(subject);
+    const normalizedCategories = normalizeCategories(categories);
+    const normalizedDetails = normalizeCategoryDetails(categoryDetails);
+    const normalizedNotes = asTrimmed(notes);
+    const normalizedContent = asTrimmed(content);
 
     if (!studentName && !studentId) {
       return res.status(400).json({ message: 'studentName or studentId is required.' });
     }
-    if (!Array.isArray(tags)) {
-      return res.status(400).json({ message: 'tags must be an array.' });
+    if (!normalizedSubject) {
+      return res.status(400).json({ message: 'subject is required.' });
+    }
+    if (!normalizedCategories.length) {
+      return res.status(400).json({ message: 'At least one category is required.' });
     }
 
     const { student, targetClass } = await resolveStudentAndClass({ studentId, studentName, className });
@@ -238,21 +301,36 @@ const generateFeedback = async (req, res) => {
         .json({ message: 'Teachers can only send feedback to students in their classes.' });
     }
 
+    if (req.user.role === 'teacher' && !hasSubjectAccess(req.user.subjects || [], normalizedSubject)) {
+      return res
+        .status(403)
+        .json({ message: 'Teachers can only send feedback in their assigned subjects.' });
+    }
+
     const senderRole = req.user.role === 'admin' ? 'admin' : 'teacher';
     const senderName = req.user?.name || (senderRole === 'admin' ? 'Admin' : 'Teacher');
 
-    let message;
-    try {
-      message = await generateArabicMessageWithAI({
-        studentName: student.name,
-        tags,
-        notes,
-        senderType: senderRole,
-      });
-    } catch (apiError) {
-      console.warn('AI generation failed, using fallback:', apiError.message);
-      message = buildFallbackMessage(student.name, tags, notes);
+    let message = normalizedContent;
+    if (!message && suggestAi) {
+      try {
+        message = await generateArabicMessageWithAI({
+          studentName: student.name,
+          subject: normalizedSubject,
+          categories: normalizedCategories,
+          categoryDetails: normalizedDetails,
+          notes: normalizedNotes,
+          senderType: senderRole,
+        });
+      } catch {
+        message = '';
+      }
     }
+
+    if (!message) {
+      message = buildFallbackMessage(student.name, normalizedSubject, normalizedCategories, normalizedNotes);
+    }
+
+    const tags = flattenTagsFromDetails(normalizedDetails);
 
     const created = await Feedback.create({
       studentId: student._id,
@@ -269,8 +347,11 @@ const generateFeedback = async (req, res) => {
       receiverId: student._id,
       receiverRole: 'student',
       feedbackType: senderRole === 'admin' ? 'admin_feedback' : 'teacher_feedback',
+      subject: normalizedSubject,
+      categories: normalizedCategories,
+      categoryDetails: normalizedDetails,
       tags,
-      notes: asTrimmed(notes),
+      notes: normalizedNotes,
       suggestion: asTrimmed(suggestion),
       message,
       content: message,
@@ -290,10 +371,17 @@ const submitStudentToTeacherFeedback = async (req, res) => {
   try {
     const teacherId = asTrimmed(req.body?.teacherId);
     const content = asTrimmed(req.body?.content);
+    const subject = asTrimmed(req.body?.subject);
+    const categories = normalizeCategories(req.body?.categories || []);
+    const categoryDetails = normalizeCategoryDetails(req.body?.categoryDetails || {});
+    const notes = asTrimmed(req.body?.notes);
     const feedbackType = 'student_to_teacher';
 
-    if (!teacherId || !content) {
-      return res.status(400).json({ message: 'teacherId and content are required.' });
+    if (!teacherId || !content || !subject) {
+      return res.status(400).json({ message: 'teacherId, content, and subject are required.' });
+    }
+    if (!categories.length) {
+      return res.status(400).json({ message: 'At least one category is required.' });
     }
 
     const [student, teacher] = await Promise.all([
@@ -311,6 +399,11 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       return res
         .status(403)
         .json({ message: 'You can only send feedback to teachers assigned to your class.' });
+    }
+    if (!hasSubjectAccess(teacher.subjects || [], subject)) {
+      return res
+        .status(403)
+        .json({ message: 'Selected subject is not assigned to this teacher.' });
     }
 
     const className =
@@ -332,6 +425,11 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       receiverId: teacher._id,
       receiverRole: 'teacher',
       feedbackType,
+      subject,
+      categories,
+      categoryDetails,
+      tags: flattenTagsFromDetails(categoryDetails),
+      notes,
       message: content,
       content,
       timestamp: new Date(),
@@ -349,10 +447,17 @@ const submitStudentToAdminFeedback = async (req, res) => {
   try {
     const requestedAdminId = asTrimmed(req.body?.adminId);
     const content = asTrimmed(req.body?.content);
+    const subject = asTrimmed(req.body?.subject);
+    const categories = normalizeCategories(req.body?.categories || []);
+    const categoryDetails = normalizeCategoryDetails(req.body?.categoryDetails || {});
+    const notes = asTrimmed(req.body?.notes);
     const feedbackType = 'student_to_admin';
 
-    if (!content) {
-      return res.status(400).json({ message: 'content is required.' });
+    if (!content || !subject) {
+      return res.status(400).json({ message: 'content and subject are required.' });
+    }
+    if (!categories.length) {
+      return res.status(400).json({ message: 'At least one category is required.' });
     }
 
     const student = await User.findOne({ _id: req.user.id, role: 'student' });
@@ -384,6 +489,11 @@ const submitStudentToAdminFeedback = async (req, res) => {
       receiverId: admin._id,
       receiverRole: 'admin',
       feedbackType,
+      subject,
+      categories,
+      categoryDetails,
+      tags: flattenTagsFromDetails(categoryDetails),
+      notes,
       message: content,
       content,
       timestamp: new Date(),
@@ -402,6 +512,8 @@ const listFeedbacks = async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
     const feedbackTypes = parseFeedbackTypes(req.query);
     const query = {};
+    const searchText = asTrimmed(req.query.search);
+    const categoryFilter = parseCategoryFilter(req.query.category);
 
     if (asTrimmed(req.query.studentId)) {
       query.studentId = asTrimmed(req.query.studentId);
@@ -415,6 +527,9 @@ const listFeedbacks = async (req, res) => {
     if (asTrimmed(req.query.className)) {
       query.className = asTrimmed(req.query.className);
     }
+    if (asTrimmed(req.query.subject)) {
+      query.subject = asTrimmed(req.query.subject);
+    }
     if (asTrimmed(req.query.senderRole)) {
       query.senderRole = asTrimmed(req.query.senderRole);
     }
@@ -427,7 +542,27 @@ const listFeedbacks = async (req, res) => {
       query.feedbackType = { $in: feedbackTypes };
     }
     if (asTrimmed(req.query.studentName)) {
-      query.studentName = new RegExp(`^${escapeRegExp(asTrimmed(req.query.studentName))}$`, 'i');
+      query.studentName = new RegExp(escapeRegExp(asTrimmed(req.query.studentName)), 'i');
+    }
+    if (asTrimmed(req.query.teacherName)) {
+      query.teacherName = new RegExp(escapeRegExp(asTrimmed(req.query.teacherName)), 'i');
+    }
+    if (categoryFilter.length === 1) {
+      query.categories = categoryFilter[0];
+    } else if (categoryFilter.length > 1) {
+      query.categories = { $in: categoryFilter };
+    }
+    if (searchText) {
+      const pattern = new RegExp(escapeRegExp(searchText), 'i');
+      query.$or = [
+        { studentName: pattern },
+        { teacherName: pattern },
+        { adminName: pattern },
+        { className: pattern },
+        { subject: pattern },
+        { message: pattern },
+        { content: pattern },
+      ];
     }
 
     const scopedQuery = applyRoleScope(query, req.user);

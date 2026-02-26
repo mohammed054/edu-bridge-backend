@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { FEEDBACK_CATEGORY_KEYS } = require('../constants/feedbackCatalog');
 
 const replySchema = new mongoose.Schema(
   {
@@ -35,6 +36,17 @@ const feedbackSchema = new mongoose.Schema(
       ],
       default: 'teacher_feedback',
     },
+    subject: { type: String, trim: true, default: '' },
+    categories: {
+      type: [String],
+      enum: FEEDBACK_CATEGORY_KEYS,
+      default: [],
+    },
+    categoryDetails: {
+      academic: { type: [String], default: [] },
+      behavior: { type: [String], default: [] },
+      misc: { type: [String], default: [] },
+    },
     tags: { type: [String], default: [] },
     notes: { type: String, default: '' },
     suggestion: { type: String, default: '' },
@@ -56,5 +68,8 @@ feedbackSchema.index({ studentId: 1, feedbackType: 1, createdAt: -1 });
 feedbackSchema.index({ teacherId: 1, feedbackType: 1, createdAt: -1 });
 feedbackSchema.index({ adminId: 1, feedbackType: 1, createdAt: -1 });
 feedbackSchema.index({ senderId: 1, senderRole: 1, createdAt: -1 });
+feedbackSchema.index({ subject: 1, createdAt: -1 });
+feedbackSchema.index({ categories: 1, createdAt: -1 });
+feedbackSchema.index({ className: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Feedback', feedbackSchema);

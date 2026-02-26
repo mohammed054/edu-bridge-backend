@@ -18,6 +18,10 @@ const examMarkSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+    teacherName: {
+      type: String,
+      default: '',
+    },
     updatedAt: {
       type: Date,
       default: Date.now,
@@ -60,6 +64,10 @@ const userSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    subjects: {
+      type: [String],
+      default: [],
+    },
     absentDays: {
       type: Number,
       default: 0,
@@ -88,6 +96,7 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     name: this.name,
     role: this.role,
     classes: this.classes || [],
+    subjects: this.subjects || [],
     absentDays: this.absentDays || 0,
     negativeReports: this.negativeReports || 0,
     examMarks: this.examMarks || [],
