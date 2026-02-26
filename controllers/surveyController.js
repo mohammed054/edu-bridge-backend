@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
@@ -9,6 +9,7 @@ const normalizeAudience = (value) => {
   if (!Array.isArray(value)) {
     return [];
   }
+
   return [...new Set(value.map((item) => asTrimmed(item)).filter((item) => ['student', 'teacher'].includes(item)))];
 };
 
@@ -105,7 +106,7 @@ const listAdminSurveys = async (_req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load surveys.' });
+    return res.status(500).json({ message: error.message || '???? ????? ???????????.' });
   }
 };
 
@@ -117,13 +118,13 @@ const createSurvey = async (req, res) => {
     const questions = normalizeQuestions(req.body?.questions || []);
 
     if (!name) {
-      return res.status(400).json({ message: 'Survey name is required.' });
+      return res.status(400).json({ message: '??? ????????? ?????.' });
     }
     if (!audience.length) {
-      return res.status(400).json({ message: 'Survey audience is required.' });
+      return res.status(400).json({ message: '??? ????????? ??????.' });
     }
     if (!questions.length) {
-      return res.status(400).json({ message: 'Survey must include at least one valid question.' });
+      return res.status(400).json({ message: '??? ????? ???? ???? ???? ??? ?????.' });
     }
 
     const assignedUserIds = await normalizeAssignedUsers(req.body?.assignedUserIds || [], audience);
@@ -140,7 +141,7 @@ const createSurvey = async (req, res) => {
 
     return res.status(201).json({ survey: surveyPayload(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to create survey.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?????????.' });
   }
 };
 
@@ -148,17 +149,17 @@ const updateSurvey = async (req, res) => {
   try {
     const existing = await Survey.findById(req.params.id);
     if (!existing) {
-      return res.status(404).json({ message: 'Survey not found.' });
+      return res.status(404).json({ message: '????????? ??? ?????.' });
     }
 
     const audience = req.body?.audience ? normalizeAudience(req.body?.audience || []) : existing.audience;
     const questions = req.body?.questions ? normalizeQuestions(req.body?.questions || []) : existing.questions;
 
     if (!audience.length) {
-      return res.status(400).json({ message: 'Survey audience is required.' });
+      return res.status(400).json({ message: '??? ????????? ??????.' });
     }
     if (!questions.length) {
-      return res.status(400).json({ message: 'Survey must include at least one valid question.' });
+      return res.status(400).json({ message: '??? ????? ???? ???? ???? ??? ?????.' });
     }
 
     const assignedUserIds = req.body?.assignedUserIds
@@ -178,7 +179,7 @@ const updateSurvey = async (req, res) => {
     await existing.save();
     return res.json({ survey: surveyPayload(existing.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update survey.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?????????.' });
   }
 };
 
@@ -186,12 +187,13 @@ const deleteSurvey = async (req, res) => {
   try {
     const survey = await Survey.findByIdAndDelete(req.params.id);
     if (!survey) {
-      return res.status(404).json({ message: 'Survey not found.' });
+      return res.status(404).json({ message: '????????? ??? ?????.' });
     }
+
     await SurveyResponse.deleteMany({ surveyId: survey._id });
-    return res.json({ message: 'Survey deleted successfully.' });
+    return res.json({ message: '?? ??? ????????? ?????.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to delete survey.' });
+    return res.status(500).json({ message: error.message || '???? ??? ?????????.' });
   }
 };
 
@@ -199,7 +201,7 @@ const listSurveyResponsesForAdmin = async (req, res) => {
   try {
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey) {
-      return res.status(404).json({ message: 'Survey not found.' });
+      return res.status(404).json({ message: '????????? ??? ?????.' });
     }
 
     const responses = await SurveyResponse.find({ surveyId: survey._id }).sort({ createdAt: -1 }).lean();
@@ -219,7 +221,7 @@ const listSurveyResponsesForAdmin = async (req, res) => {
       responses: responses.map((item) => ({
         id: String(item._id),
         respondentId: String(item.respondentId),
-        respondentName: respondentById[String(item.respondentId)]?.name || 'مستخدم',
+        respondentName: respondentById[String(item.respondentId)]?.name || '??????',
         respondentEmail: respondentById[String(item.respondentId)]?.email || '',
         respondentRole: item.respondentRole,
         answers: item.answers || [],
@@ -227,7 +229,7 @@ const listSurveyResponsesForAdmin = async (req, res) => {
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load survey responses.' });
+    return res.status(500).json({ message: error.message || '???? ????? ???? ?????????.' });
   }
 };
 
@@ -264,7 +266,7 @@ const listAssignedSurveys = async (req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load assigned surveys.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????????? ???????.' });
   }
 };
 
@@ -272,16 +274,16 @@ const submitSurveyResponse = async (req, res) => {
   try {
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey || !survey.isActive) {
-      return res.status(404).json({ message: 'Survey not found.' });
+      return res.status(404).json({ message: '????????? ??? ?????.' });
     }
 
     if (!(survey.audience || []).includes(req.user.role)) {
-      return res.status(403).json({ message: 'You are not allowed to answer this survey.' });
+      return res.status(403).json({ message: '?? ???? ?????? ???? ??? ??? ?????????.' });
     }
 
     const assignedUserIds = (survey.assignedUserIds || []).map((id) => String(id));
     if (assignedUserIds.length && !assignedUserIds.includes(String(req.user.id))) {
-      return res.status(403).json({ message: 'You are not assigned to this survey.' });
+      return res.status(403).json({ message: '?? ??? ????? ??? ????????? ??.' });
     }
 
     const answersInput = Array.isArray(req.body?.answers) ? req.body.answers : [];
@@ -328,7 +330,7 @@ const submitSurveyResponse = async (req, res) => {
       .filter(Boolean);
 
     if (!answers.length) {
-      return res.status(400).json({ message: 'At least one valid answer is required.' });
+      return res.status(400).json({ message: '??? ????? ????? ????? ????? ??? ?????.' });
     }
 
     const response = await SurveyResponse.findOneAndUpdate(
@@ -345,6 +347,8 @@ const submitSurveyResponse = async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     ).lean();
 
+    await Survey.updateOne({ _id: survey._id }, { $addToSet: { responses: response._id } });
+
     return res.status(201).json({
       response: {
         id: String(response._id),
@@ -354,7 +358,7 @@ const submitSurveyResponse = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to submit survey response.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?? ?????????.' });
   }
 };
 
@@ -367,3 +371,5 @@ module.exports = {
   listAssignedSurveys,
   submitSurveyResponse,
 };
+
+

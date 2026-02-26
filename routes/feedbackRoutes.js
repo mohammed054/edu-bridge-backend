@@ -1,6 +1,6 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
-const { verifyToken, authorize } = require('../middleware/authMiddleware');
+const { verifyToken, authorize, studentOnly } = require('../middleware/authMiddleware');
 const {
   getFeedbackOptions,
   generateFeedback,
@@ -14,9 +14,11 @@ router.use(verifyToken);
 
 router.get('/options', authorize('teacher', 'admin', 'student'), getFeedbackOptions);
 router.post('/generate', authorize('teacher', 'admin'), generateFeedback);
-router.post('/student-to-teacher', authorize('student'), submitStudentToTeacherFeedback);
-router.post('/student-to-admin', authorize('student'), submitStudentToAdminFeedback);
+router.post('/student-to-teacher', studentOnly, submitStudentToTeacherFeedback);
+router.post('/student-to-admin', studentOnly, submitStudentToAdminFeedback);
 router.get('/list', authorize('teacher', 'student', 'admin'), listFeedbacks);
-router.post('/reply', authorize('student'), addReply);
+router.post('/reply', studentOnly, addReply);
 
 module.exports = router;
+
+

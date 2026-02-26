@@ -1,4 +1,4 @@
-const HIKMAH_SUBJECTS = [
+﻿const HIKMAH_SUBJECTS = [
   'الرياضيات',
   'اللغة العربية',
   'اللغة الإنجليزية',

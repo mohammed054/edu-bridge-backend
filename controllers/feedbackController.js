@@ -1,4 +1,4 @@
-const ClassModel = require('../models/Class');
+﻿const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
 const User = require('../models/User');
 const { HIKMAH_SUBJECTS } = require('../constants/subjects');
@@ -18,6 +18,7 @@ const normalizeStringArray = (value) => {
   if (!Array.isArray(value)) {
     return [];
   }
+
   return [...new Set(value.map((item) => asTrimmed(item)).filter(Boolean))];
 };
 
@@ -28,11 +29,13 @@ const normalizeCategoryDetails = (value = {}) => {
   if (!value || typeof value !== 'object') {
     return {};
   }
+
   return Object.entries(value).reduce((acc, [key, list]) => {
     const cleanKey = asTrimmed(key);
     if (!cleanKey) {
       return acc;
     }
+
     acc[cleanKey] = normalizeStringArray(list);
     return acc;
   }, {});
@@ -48,10 +51,18 @@ const hasSubjectAccess = (teacherSubjects, subject) =>
 
 const buildFallbackMessage = (studentName, subject, categories, notes) => {
   const labels = categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).filter(Boolean);
-  const summary = labels.length ? labels.join('، ') : 'متابعة عامة';
-  const notesLine = notes ? ` ملاحظة إضافية: ${notes}.` : '';
-  return `تم تسجيل تغذية راجعة للطالب/ة ${studentName} في مادة ${subject} ضمن فئة ${summary}.${notesLine}`.trim();
+  const summary = labels.length ? labels.join('? ') : '?????? ????';
+  const notesLine = notes ? ` ?????? ??????: ${notes}.` : '';
+  return `?? ????? ????? ????? ??????/? ${studentName} ?? ???? ${subject} ??? ??? ${summary}.${notesLine}`.trim();
 };
+
+const buildAiAnalysisPlaceholder = ({ categories, categoryDetails, notes }) => ({
+  status: 'placeholder',
+  categories,
+  categoryDetails,
+  notes,
+  updatedAt: new Date().toISOString(),
+});
 
 const generateArabicMessageWithAI = async ({
   studentName,
@@ -62,23 +73,23 @@ const generateArabicMessageWithAI = async ({
   senderType,
 }) => {
   if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error('مفتاح خدمة الذكاء الاصطناعي غير متوفر.');
+    throw new Error('????? ?????? ????????? ??? ?????.');
   }
 
   const detailsText = Object.entries(categoryDetails || {})
-    .map(([key, values]) => `${key}: ${(values || []).join('، ') || 'لا يوجد'}`)
+    .map(([key, values]) => `${key}: ${(values || []).join('? ') || '?? ????'}`)
     .join('\n');
 
   const systemPrompt =
-    'أنت مساعد تربوي محترف. اكتب رسالة تغذية راجعة عربية قصيرة ومهنية وواضحة للطالب والأسرة.';
-  const userPrompt = `اسم الطالب: ${studentName}
-نوع المرسل: ${senderType}
-المادة: ${subject}
-الفئات: ${categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).join('، ') || 'بدون'}
-تفاصيل الفئات:
-${detailsText || 'لا يوجد'}
-ملاحظات إضافية: ${notes || 'لا يوجد'}
-اكتب الرسالة بجملتين أو ثلاث جمل فقط.`;
+    '??? ????? ????? ?????. ???? ????? ????? ????? ????? ????? ?????? ?????? ?????? ???????.';
+  const userPrompt = `??? ??????: ${studentName}
+??? ??????: ${senderType}
+??????: ${subject}
+??????: ${categories.map((key) => FEEDBACK_CATEGORY_LABEL_BY_KEY[key]).join('? ') || '????'}
+?????? ??????:
+${detailsText || '?? ????'}
+??????? ??????: ${notes || '?? ????'}
+???? ??????? ?? 2-3 ???.`;
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: 'POST',
@@ -101,13 +112,13 @@ ${detailsText || 'لا يوجد'}
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`تعذر توليد الرسالة: ${errorText}`);
+    throw new Error(`???? ????? ???????: ${errorText}`);
   }
 
   const data = await response.json();
   const text = data?.choices?.[0]?.message?.content?.trim();
   if (!text) {
-    throw new Error('لم يتم توليد نص مناسب.');
+    throw new Error('?? ??? ????? ?? ?????.');
   }
 
   return text;
@@ -118,6 +129,7 @@ const parseFeedbackTypes = (query) => {
   if (!rawTypes) {
     return [];
   }
+
   return [...new Set(rawTypes.split(',').map((item) => item.trim()).filter(Boolean))];
 };
 
@@ -139,6 +151,7 @@ const applyRoleScope = (query, reqUser) => {
     const teacherScope = {
       $or: [{ teacherId: reqUser.id }, { senderId: reqUser.id }, { receiverId: reqUser.id }],
     };
+
     if (!subjects.length) {
       return { $and: [query, teacherScope] };
     }
@@ -170,7 +183,7 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   }
 
   if (!student) {
-    throw new Error('الطالب غير موجود.');
+    throw new Error('?????? ??? ?????.');
   }
 
   const studentClass = (student.classes || [])[0] || '';
@@ -186,7 +199,7 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   }
 
   if (!targetClass) {
-    throw new Error('لا يوجد صف مرتبط بالطالب.');
+    throw new Error('?? ???? ?? ????? ???????.');
   }
 
   return { student, targetClass };
@@ -206,13 +219,14 @@ const getFeedbackOptions = async (req, res) => {
           : { _id: null }
         : {};
 
-    const classes = await ClassModel.find(classQuery).sort({ createdAt: 1 }).lean();
-    const students = await User.find(
-      req.user.role === 'student' ? { _id: req.user.id, role: 'student' } : { role: 'student' }
-    )
-      .sort({ name: 1 })
-      .lean();
-    const teachers = await User.find({ role: 'teacher' }).sort({ name: 1 }).lean();
+    const [classes, students, teachers, admins] = await Promise.all([
+      ClassModel.find(classQuery).sort({ createdAt: 1 }).lean(),
+      User.find(req.user.role === 'student' ? { _id: req.user.id, role: 'student' } : { role: 'student' })
+        .sort({ name: 1 })
+        .lean(),
+      User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
+      User.find({ role: 'admin' }, { name: 1, username: 1, email: 1, profilePicture: 1, avatarUrl: 1 }).lean(),
+    ]);
 
     const payload = classes.map((item) => ({
       id: String(item._id),
@@ -225,7 +239,7 @@ const getFeedbackOptions = async (req, res) => {
           id: String(student._id),
           name: student.name,
           email: student.email,
-          avatarUrl: student.avatarUrl || '',
+          avatarUrl: student.profilePicture || student.avatarUrl || '',
         })),
       teachers: teachers
         .filter((teacher) => (teacher.classes || []).includes(item.name))
@@ -233,13 +247,11 @@ const getFeedbackOptions = async (req, res) => {
           id: String(teacher._id),
           name: teacher.name,
           email: teacher.email,
-          avatarUrl: teacher.avatarUrl || '',
-          subjects: teacher.subjects || [],
-          subject: teacher.subjects?.[0] || '',
+          avatarUrl: teacher.profilePicture || teacher.avatarUrl || '',
+          subjects: teacher.subject ? [teacher.subject] : teacher.subjects || [],
+          subject: teacher.subject || teacher.subjects?.[0] || '',
         })),
     }));
-
-    const admins = await User.find({ role: 'admin' }, { name: 1, username: 1, email: 1, avatarUrl: 1 }).lean();
 
     const subjectsByRole = {
       admin: HIKMAH_SUBJECTS,
@@ -251,15 +263,15 @@ const getFeedbackOptions = async (req, res) => {
       classes: payload,
       admins: admins.map((admin) => ({
         id: String(admin._id),
-        name: admin.name || admin.username || 'الإدارة',
+        name: admin.name || admin.username || '???????',
         email: admin.email || '',
-        avatarUrl: admin.avatarUrl || '',
+        avatarUrl: admin.profilePicture || admin.avatarUrl || '',
       })),
       categories: FEEDBACK_CATEGORIES,
       subjects: subjectsByRole[req.user.role] || HIKMAH_SUBJECTS,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل خيارات التغذية الراجعة.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?????? ??????? ???????.' });
   }
 };
 
@@ -275,6 +287,7 @@ const generateFeedback = async (req, res) => {
       notes = '',
       suggestion = '',
       content = '',
+      subcategory = '',
       suggestAi = true,
     } = req.body || {};
 
@@ -283,15 +296,16 @@ const generateFeedback = async (req, res) => {
     const normalizedDetails = normalizeCategoryDetails(categoryDetails);
     const normalizedNotes = asTrimmed(notes);
     const normalizedContent = asTrimmed(content);
+    const normalizedSubcategory = asTrimmed(subcategory);
 
     if (!studentName && !studentId) {
-      return res.status(400).json({ message: 'يجب تحديد الطالب.' });
+      return res.status(400).json({ message: '??? ????? ??????.' });
     }
     if (!normalizedSubject) {
-      return res.status(400).json({ message: 'المادة مطلوبة.' });
+      return res.status(400).json({ message: '?????? ??????.' });
     }
     if (!normalizedCategories.length) {
-      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
+      return res.status(400).json({ message: '??? ?????? ??? ????? ??? ?????.' });
     }
 
     const { student, targetClass } = await resolveStudentAndClass({ studentId, studentName, className });
@@ -301,15 +315,15 @@ const generateFeedback = async (req, res) => {
       req.user.classes?.length &&
       !req.user.classes.includes(targetClass.name)
     ) {
-      return res.status(403).json({ message: 'يمكن للمعلم الإرسال لطلابه فقط.' });
+      return res.status(403).json({ message: '???? ?????? ??????? ?????? ???.' });
     }
 
     if (req.user.role === 'teacher' && !hasSubjectAccess(req.user.subjects || [], normalizedSubject)) {
-      return res.status(403).json({ message: 'يمكن للمعلم الإرسال في مادته فقط.' });
+      return res.status(403).json({ message: '???? ?????? ??????? ?? ????? ???.' });
     }
 
     const senderRole = req.user.role === 'admin' ? 'admin' : 'teacher';
-    const senderName = req.user?.name || (senderRole === 'admin' ? 'الإدارة' : 'المعلم');
+    const senderName = req.user?.name || (senderRole === 'admin' ? '???????' : '??????');
 
     let message = normalizedContent;
     if (!message && suggestAi) {
@@ -349,22 +363,32 @@ const generateFeedback = async (req, res) => {
       receiverRole: 'student',
       feedbackType: senderRole === 'admin' ? 'admin_feedback' : 'teacher_feedback',
       subject: normalizedSubject,
+      category: normalizedCategories[0],
+      subcategory: normalizedSubcategory,
       categories: normalizedCategories,
       categoryDetails: normalizedDetails,
       tags,
       notes: normalizedNotes,
       suggestion: asTrimmed(suggestion),
+      text: message,
       message,
       content: message,
+      AIAnalysis: buildAiAnalysisPlaceholder({
+        categories: normalizedCategories,
+        categoryDetails: normalizedDetails,
+        notes: normalizedNotes,
+      }),
       timestamp: new Date(),
     });
+
+    await User.updateOne({ _id: student._id }, { $addToSet: { feedbackHistory: created._id } });
 
     return res.status(201).json({
       message,
       feedback: created,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إنشاء التغذية الراجعة.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????? ???????.' });
   }
 };
 
@@ -376,13 +400,13 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     const categories = normalizeCategories(req.body?.categories || []);
     const categoryDetails = normalizeCategoryDetails(req.body?.categoryDetails || {});
     const notes = asTrimmed(req.body?.notes);
-    const feedbackType = 'student_to_teacher';
+    const subcategory = asTrimmed(req.body?.subcategory);
 
     if (!teacherId || !subject) {
-      return res.status(400).json({ message: 'المعلم والمادة حقول مطلوبة.' });
+      return res.status(400).json({ message: '?????? ??????? ???? ??????.' });
     }
     if (!categories.length) {
-      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
+      return res.status(400).json({ message: '??? ?????? ??? ????? ??? ?????.' });
     }
 
     const [student, teacher] = await Promise.all([
@@ -391,16 +415,16 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     ]);
 
     if (!student) {
-      return res.status(404).json({ message: 'حساب الطالب غير موجود.' });
+      return res.status(404).json({ message: '???? ?????? ??? ?????.' });
     }
     if (!teacher) {
-      return res.status(404).json({ message: 'المعلم غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
     if (!ensureSharedClass(student.classes || [], teacher.classes || [])) {
-      return res.status(403).json({ message: 'يمكنك الإرسال لمعلمي صفك فقط.' });
+      return res.status(403).json({ message: '????? ??????? ?????? ??? ???.' });
     }
-    if (!hasSubjectAccess(teacher.subjects || [], subject)) {
-      return res.status(403).json({ message: 'المادة غير مرتبطة بهذا المعلم.' });
+    if (!hasSubjectAccess(teacher.subject ? [teacher.subject] : teacher.subjects || [], subject)) {
+      return res.status(403).json({ message: '?????? ??? ?????? ???? ??????.' });
     }
 
     const className =
@@ -409,8 +433,8 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       '';
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
 
-    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || 'تغذية راجعة';
-    const resolvedContent = content || `تم إرسال ${firstCategoryLabel} من الطالب.`;
+    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || '????? ?????';
+    const resolvedContent = content || `?? ????? ${firstCategoryLabel} ?? ??????.`;
 
     const feedback = await Feedback.create({
       studentId: student._id,
@@ -424,20 +448,24 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       senderType: 'student',
       receiverId: teacher._id,
       receiverRole: 'teacher',
-      feedbackType,
+      feedbackType: 'student_to_teacher',
       subject,
+      category: categories[0],
+      subcategory,
       categories,
       categoryDetails,
       tags: flattenTagsFromDetails(categoryDetails),
       notes,
+      text: resolvedContent,
       message: resolvedContent,
       content: resolvedContent,
+      AIAnalysis: buildAiAnalysisPlaceholder({ categories, categoryDetails, notes }),
       timestamp: new Date(),
     });
 
     return res.status(201).json({ feedback });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إرسال التغذية الراجعة للمعلم.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????? ??????? ??????.' });
   }
 };
 
@@ -449,18 +477,18 @@ const submitStudentToAdminFeedback = async (req, res) => {
     const categories = normalizeCategories(req.body?.categories || []);
     const categoryDetails = normalizeCategoryDetails(req.body?.categoryDetails || {});
     const notes = asTrimmed(req.body?.notes);
-    const feedbackType = 'student_to_admin';
+    const subcategory = asTrimmed(req.body?.subcategory);
 
     if (!subject) {
-      return res.status(400).json({ message: 'المادة حقل مطلوب.' });
+      return res.status(400).json({ message: '?????? ??? ?????.' });
     }
     if (!categories.length) {
-      return res.status(400).json({ message: 'يجب اختيار فئة واحدة على الأقل.' });
+      return res.status(400).json({ message: '??? ?????? ??? ????? ??? ?????.' });
     }
 
     const student = await User.findOne({ _id: req.user.id, role: 'student' });
     if (!student) {
-      return res.status(404).json({ message: 'حساب الطالب غير موجود.' });
+      return res.status(404).json({ message: '???? ?????? ??? ?????.' });
     }
 
     const adminQuery = requestedAdminId
@@ -468,14 +496,14 @@ const submitStudentToAdminFeedback = async (req, res) => {
       : { role: 'admin' };
     const admin = await User.findOne(adminQuery).sort({ createdAt: 1 });
     if (!admin) {
-      return res.status(404).json({ message: 'حساب الإدارة غير موجود.' });
+      return res.status(404).json({ message: '???? ??????? ??? ?????.' });
     }
 
     const className = asTrimmed(req.body?.className) || (student.classes || [])[0] || '';
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
 
-    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || 'تغذية راجعة';
-    const resolvedContent = content || `تم إرسال ${firstCategoryLabel} من الطالب.`;
+    const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || '????? ?????';
+    const resolvedContent = content || `?? ????? ${firstCategoryLabel} ?? ??????.`;
 
     const feedback = await Feedback.create({
       studentId: student._id,
@@ -483,26 +511,30 @@ const submitStudentToAdminFeedback = async (req, res) => {
       classId: classItem?._id || null,
       className,
       adminId: admin._id,
-      adminName: admin.name || admin.username || 'الإدارة',
+      adminName: admin.name || admin.username || '???????',
       senderId: student._id,
       senderRole: 'student',
       senderType: 'student',
       receiverId: admin._id,
       receiverRole: 'admin',
-      feedbackType,
+      feedbackType: 'student_to_admin',
       subject,
+      category: categories[0],
+      subcategory,
       categories,
       categoryDetails,
       tags: flattenTagsFromDetails(categoryDetails),
       notes,
+      text: resolvedContent,
       message: resolvedContent,
       content: resolvedContent,
+      AIAnalysis: buildAiAnalysisPlaceholder({ categories, categoryDetails, notes }),
       timestamp: new Date(),
     });
 
     return res.status(201).json({ feedback });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إرسال التغذية الراجعة للإدارة.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????? ??????? ???????.' });
   }
 };
 
@@ -547,9 +579,9 @@ const listFeedbacks = async (req, res) => {
       query.teacherName = new RegExp(escapeRegExp(asTrimmed(req.query.teacherName)), 'i');
     }
     if (categoryFilter.length === 1) {
-      query.categories = categoryFilter[0];
+      query.category = categoryFilter[0];
     } else if (categoryFilter.length > 1) {
-      query.categories = { $in: categoryFilter };
+      query.category = { $in: categoryFilter };
     }
     if (searchText) {
       const pattern = new RegExp(escapeRegExp(searchText), 'i');
@@ -569,7 +601,7 @@ const listFeedbacks = async (req, res) => {
 
     return res.json({ feedbacks });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل سجل التغذية الراجعة.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??? ??????? ???????.' });
   }
 };
 
@@ -579,16 +611,16 @@ const addReply = async (req, res) => {
     const text = asTrimmed(req.body?.text);
 
     if (!feedbackId || !text) {
-      return res.status(400).json({ message: 'المعرف ونص الرد حقول مطلوبة.' });
+      return res.status(400).json({ message: '??????? ??? ???? ???? ??????.' });
     }
 
     const existing = await Feedback.findById(feedbackId).lean();
     if (!existing) {
-      return res.status(404).json({ message: 'التغذية الراجعة غير موجودة.' });
+      return res.status(404).json({ message: '??????? ??????? ??? ??????.' });
     }
 
     if (String(existing.studentId) !== String(req.user.id)) {
-      return res.status(403).json({ message: 'يمكنك الرد على الرسائل الخاصة بك فقط.' });
+      return res.status(403).json({ message: '????? ???? ??? ??????? ?????? ?? ???.' });
     }
 
     const feedback = await Feedback.findByIdAndUpdate(
@@ -607,7 +639,7 @@ const addReply = async (req, res) => {
 
     return res.json({ feedback });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إرسال الرد.' });
+    return res.status(500).json({ message: error.message || '???? ????? ????.' });
   }
 };
 
@@ -619,3 +651,5 @@ module.exports = {
   listFeedbacks,
   addReply,
 };
+
+

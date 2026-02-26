@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const surveyQuestionSchema = new mongoose.Schema(
   {
@@ -26,6 +26,11 @@ const surveySchema = new mongoose.Schema(
       default: [],
     },
     questions: { type: [surveyQuestionSchema], default: [] },
+    responses: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'SurveyResponse',
+      default: [],
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     isActive: { type: Boolean, default: true },
   },
@@ -35,3 +40,5 @@ const surveySchema = new mongoose.Schema(
 surveySchema.index({ isActive: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Survey', surveySchema);
+
+

@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const {
   listOverview,
   getReports,
@@ -20,11 +20,11 @@ const {
   deleteSurvey,
   listSurveyResponsesForAdmin,
 } = require('../controllers/surveyController');
-const { verifyToken, authorize } = require('../middleware/authMiddleware');
+const { verifyToken, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.use(verifyToken, authorize('admin'));
+router.use(verifyToken, adminOnly);
 
 router.get('/overview', listOverview);
 router.get('/reports', getReports);
@@ -49,3 +49,5 @@ router.delete('/surveys/:id', deleteSurvey);
 router.get('/surveys/:id/responses', listSurveyResponsesForAdmin);
 
 module.exports = router;
+
+

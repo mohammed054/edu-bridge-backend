@@ -1,69 +1,91 @@
-const bcrypt = require('bcrypt');
+﻿const bcrypt = require('bcrypt');
 const ClassModel = require('../models/Class');
+const Subject = require('../models/Subject');
 const User = require('../models/User');
+const Report = require('../models/Report');
 const { HIKMAH_SUBJECTS } = require('../constants/subjects');
 const { buildAdminReports } = require('../services/reportService');
 const {
   normalizeEmail,
   normalizeIdentifier,
   normalizeClasses,
+  normalizeSubjects,
   validateEmailByRole,
 } = require('../utils/userValidation');
 
 const SALT_ROUNDS = 10;
-
-const normalizeSubjects = (subjects) => {
-  if (!Array.isArray(subjects)) {
-    return [];
-  }
-  return [...new Set(subjects.map((item) => String(item || '').trim()).filter(Boolean))];
-};
 
 const ensureClassesExist = async (classNames) => {
   for (const className of classNames) {
     // eslint-disable-next-line no-await-in-loop
     await ClassModel.updateOne(
       { name: className },
-      { $setOnInsert: { name: className, grade: '', section: '' } },
+      { $setOnInsert: { name: className, grade: '', section: '', teachers: [], subjects: [] } },
       { upsert: true }
     );
   }
 };
 
+const ensureSubjectExists = async (subjectName) => {
+  if (!subjectName) {
+    return;
+  }
+  await Subject.updateOne(
+    { name: subjectName },
+    { $setOnInsert: { name: subjectName, maxMarks: 100 } },
+    { upsert: true }
+  );
+};
+
 const resolveTeacherSubject = (subjects) => {
   const cleanSubjects = normalizeSubjects(subjects);
   if (!cleanSubjects.length) {
-    return { error: 'يجب تعيين مادة واحدة للمعلم.' };
+    return { error: '??? ????? ???? ????? ??????.' };
   }
-  if (cleanSubjects.length > 1) {
-    return { error: 'المعلم مرتبط بمادة واحدة فقط.' };
-  }
+
   const [subject] = cleanSubjects;
   if (!HIKMAH_SUBJECTS.includes(subject)) {
-    return { error: 'المادة غير متاحة ضمن مواد المدرسة.' };
+    return { error: '?????? ??? ????? ??? ???? ???????.' };
   }
+
   return { subject };
 };
 
 const resolveStudentClass = (classes) => {
   const cleanClasses = normalizeClasses(classes);
   if (!cleanClasses.length) {
-    return { error: 'يجب تعيين الطالب إلى صف واحد.' };
+    return { error: '??? ????? ?????? ??? ?? ????.' };
   }
-  if (cleanClasses.length > 1) {
-    return { error: 'لا يمكن تعيين الطالب لأكثر من صف.' };
-  }
+
   return { className: cleanClasses[0] };
 };
 
-const buildUserPayload = async ({ role, name, email, password, classes, subjects }) => {
+const syncTeacherInClasses = async ({ teacherId, classNames, subject }) => {
+  await ClassModel.updateMany(
+    { teachers: teacherId, name: { $nin: classNames } },
+    { $pull: { teachers: teacherId } }
+  );
+
+  await ClassModel.updateMany(
+    { name: { $in: classNames } },
+    {
+      $addToSet: {
+        teachers: teacherId,
+        subjects: subject,
+      },
+    }
+  );
+};
+
+const buildUserPayload = async ({ role, name, email, password, classes, subjects, profilePicture }) => {
   const cleanName = normalizeIdentifier(name);
   const cleanPassword = String(password || '');
   const cleanEmail = normalizeEmail(email);
   const cleanClasses = normalizeClasses(classes);
+  const cleanProfilePicture = String(profilePicture || '').trim();
 
   if (!cleanName) {
-    return { error: 'الاسم مطلوب.' };
+    return { error: '????? ?????.' };
   }
 
   const emailError = validateEmailByRole(role, cleanEmail);
@@ -72,11 +94,11 @@ const buildUserPayload = async ({ role, name, email, password, classes, subjects
   }
 
   if (!cleanPassword) {
-    return { error: 'كلمة المرور مطلوبة.' };
+    return { error: '???? ?????? ??????.' };
   }
 
   let nextClasses = cleanClasses;
-  let nextSubjects = [];
+  let subject = '';
 
   if (role === 'student') {
     const { className, error } = resolveStudentClass(cleanClasses);
@@ -87,14 +109,17 @@ const buildUserPayload = async ({ role, name, email, password, classes, subjects
   }
 
   if (role === 'teacher') {
-    const { subject, error } = resolveTeacherSubject(subjects);
-    if (error) {
-      return { error };
+    const subjectResolve = resolveTeacherSubject(subjects);
+    if (subjectResolve.error) {
+      return { error: subjectResolve.error };
     }
-    nextSubjects = [subject];
+    subject = subjectResolve.subject;
   }
 
   await ensureClassesExist(nextClasses);
+  if (subject) {
+    await ensureSubjectExists(subject);
+  }
 
   const passwordHash = await bcrypt.hash(cleanPassword, SALT_ROUNDS);
   return {
@@ -103,65 +128,81 @@ const buildUserPayload = async ({ role, name, email, password, classes, subjects
       name: cleanName,
       email: cleanEmail,
       classes: nextClasses,
-      subjects: nextSubjects,
+      subject,
+      subjects: subject ? [subject] : [],
+      profilePicture: cleanProfilePicture,
+      avatarUrl: cleanProfilePicture,
       passwordHash,
     },
   };
 };
 
+const mapClassPayload = (item) => ({
+  id: String(item._id),
+  name: item.name,
+  grade: item.grade || '',
+  section: item.section || '',
+});
+
+const mapTeacherPayload = (item) => ({
+  id: String(item._id),
+  name: item.name,
+  email: item.email,
+  profilePicture: item.profilePicture || item.avatarUrl || '',
+  avatarUrl: item.profilePicture || item.avatarUrl || '',
+  classes: item.classes || [],
+  subject: item.subject || item.subjects?.[0] || '',
+  subjects: item.subject ? [item.subject] : item.subjects || [],
+});
+
+const mapStudentPayload = (item) => ({
+  id: String(item._id),
+  name: item.name,
+  email: item.email,
+  profilePicture: item.profilePicture || item.avatarUrl || '',
+  avatarUrl: item.profilePicture || item.avatarUrl || '',
+  className: item.classes?.[0] || '',
+  classes: item.classes || [],
+  absentDays: Number(item.absentDays || 0),
+  negativeReports: Number(item.negativeReports || 0),
+});
+
 const listOverview = async (_req, res) => {
   try {
-    const [classes, teachers, students] = await Promise.all([
+    const [classes, teachers, students, subjects] = await Promise.all([
       ClassModel.find().sort({ name: 1 }).lean(),
       User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
       User.find({ role: 'student' }).sort({ name: 1 }).lean(),
+      Subject.find().sort({ name: 1 }).lean(),
     ]);
 
-    const subjectsFromTeachers = teachers
-      .flatMap((item) => item.subjects || [])
-      .map((item) => String(item || '').trim())
-      .filter(Boolean);
-    const availableSubjects = [...new Set([...HIKMAH_SUBJECTS, ...subjectsFromTeachers])].sort((a, b) =>
-      a.localeCompare(b, 'ar')
-    );
+    const availableSubjects = [...new Set([...HIKMAH_SUBJECTS, ...subjects.map((item) => item.name)])];
 
     return res.json({
-      classes: classes.map((item) => ({
-        id: String(item._id),
-        name: item.name,
-      })),
-      teachers: teachers.map((item) => ({
-        id: String(item._id),
-        name: item.name,
-        email: item.email,
-        avatarUrl: item.avatarUrl || '',
-        classes: item.classes || [],
-        subject: item.subjects?.[0] || '',
-        subjects: item.subjects || [],
-      })),
-      students: students.map((item) => ({
-        id: String(item._id),
-        name: item.name,
-        email: item.email,
-        avatarUrl: item.avatarUrl || '',
-        className: item.classes?.[0] || '',
-        classes: item.classes || [],
-        absentDays: Number(item.absentDays || 0),
-        negativeReports: Number(item.negativeReports || 0),
-      })),
+      classes: classes.map(mapClassPayload),
+      teachers: teachers.map(mapTeacherPayload),
+      students: students.map(mapStudentPayload),
       availableSubjects,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل بيانات الإدارة.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?????? ???????.' });
   }
 };
 
-const getReports = async (_req, res) => {
+const getReports = async (req, res) => {
   try {
     const reports = await buildAdminReports();
+
+    // Snapshot for historical admin reports.
+    await Report.create({
+      generatedBy: req.user.id,
+      type: 'admin_aggregate',
+      payload: reports,
+    });
+
     return res.json(reports);
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل التقارير.' });
+    return res.status(500).json({ message: error.message || '???? ????? ????????.' });
   }
 };
 
@@ -174,6 +215,7 @@ const addTeacher = async (req, res) => {
       password: req.body?.password,
       classes: req.body?.classes || [req.body?.className].filter(Boolean),
       subjects: req.body?.subjects || [req.body?.subject].filter(Boolean),
+      profilePicture: req.body?.profilePicture,
     });
 
     if (error) {
@@ -182,13 +224,19 @@ const addTeacher = async (req, res) => {
 
     const exists = await User.findOne({ email: payload.email });
     if (exists) {
-      return res.status(409).json({ message: 'المعلم موجود مسبقًا.' });
+      return res.status(409).json({ message: '?????? ????? ??????.' });
     }
 
     const user = await User.create(payload);
+    await syncTeacherInClasses({
+      teacherId: user._id,
+      classNames: user.classes || [],
+      subject: user.subject || user.subjects?.[0] || '',
+    });
+
     return res.status(201).json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إضافة المعلم.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????.' });
   }
 };
 
@@ -200,6 +248,7 @@ const addStudent = async (req, res) => {
       email: req.body?.email,
       password: req.body?.password,
       classes: req.body?.classes || [req.body?.className].filter(Boolean),
+      profilePicture: req.body?.profilePicture,
     });
 
     if (error) {
@@ -208,13 +257,13 @@ const addStudent = async (req, res) => {
 
     const exists = await User.findOne({ email: payload.email });
     if (exists) {
-      return res.status(409).json({ message: 'الطالب موجود مسبقًا.' });
+      return res.status(409).json({ message: '?????? ????? ??????.' });
     }
 
     const user = await User.create(payload);
     return res.status(201).json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إضافة الطالب.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????.' });
   }
 };
 
@@ -226,12 +275,14 @@ const removeTeacher = async (req, res) => {
     });
 
     if (!deleted) {
-      return res.status(404).json({ message: 'المعلم غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
 
-    return res.json({ message: 'تم حذف المعلم.' });
+    await ClassModel.updateMany({ teachers: deleted._id }, { $pull: { teachers: deleted._id } });
+
+    return res.json({ message: '?? ??? ??????.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف المعلم.' });
+    return res.status(500).json({ message: error.message || '???? ??? ??????.' });
   }
 };
 
@@ -243,41 +294,43 @@ const removeStudent = async (req, res) => {
     });
 
     if (!deleted) {
-      return res.status(404).json({ message: 'الطالب غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
 
-    return res.json({ message: 'تم حذف الطالب.' });
+    return res.json({ message: '?? ??? ??????.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف الطالب.' });
+    return res.status(500).json({ message: error.message || '???? ??? ??????.' });
   }
 };
 
 const addClass = async (req, res) => {
   try {
     const className = normalizeIdentifier(req.body?.name);
+    const grade = normalizeIdentifier(req.body?.grade);
+    const section = normalizeIdentifier(req.body?.section);
+
     if (!className) {
-      return res.status(400).json({ message: 'اسم الصف مطلوب.' });
+      return res.status(400).json({ message: '??? ???? ?????.' });
     }
 
     const exists = await ClassModel.findOne({ name: className });
     if (exists) {
-      return res.status(409).json({ message: 'الصف موجود مسبقًا.' });
+      return res.status(409).json({ message: '???? ????? ??????.' });
     }
 
     const created = await ClassModel.create({
       name: className,
-      grade: '',
-      section: '',
+      grade,
+      section,
+      teachers: [],
+      subjects: [],
     });
 
     return res.status(201).json({
-      classItem: {
-        id: String(created._id),
-        name: created.name,
-      },
+      classItem: mapClassPayload(created),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إضافة الصف.' });
+    return res.status(500).json({ message: error.message || '???? ????? ????.' });
   }
 };
 
@@ -285,7 +338,7 @@ const removeClass = async (req, res) => {
   try {
     const classItem = await ClassModel.findById(req.params.id);
     if (!classItem) {
-      return res.status(404).json({ message: 'الصف غير موجود.' });
+      return res.status(404).json({ message: '???? ??? ?????.' });
     }
 
     const studentsInClass = await User.countDocuments({
@@ -294,16 +347,16 @@ const removeClass = async (req, res) => {
     });
     if (studentsInClass > 0) {
       return res.status(400).json({
-        message: 'لا يمكن حذف الصف لوجود طلاب مرتبطين به.',
+        message: '?? ???? ??? ???? ????? ???? ??????? ??.',
       });
     }
 
     await ClassModel.deleteOne({ _id: classItem._id });
     await User.updateMany({ role: 'teacher' }, { $pull: { classes: classItem.name } });
 
-    return res.json({ message: 'تم حذف الصف.' });
+    return res.json({ message: '?? ??? ????.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف الصف.' });
+    return res.status(500).json({ message: error.message || '???? ??? ????.' });
   }
 };
 
@@ -315,57 +368,66 @@ const updateTeacherAssignment = async (req, res) => {
       : Array.isArray(req.body?.subjects)
         ? req.body.subjects
         : [];
-    const { subject, error } = resolveTeacherSubject(subjects);
-    if (error) {
-      return res.status(400).json({ message: error });
+
+    const subjectResolve = resolveTeacherSubject(subjects);
+    if (subjectResolve.error) {
+      return res.status(400).json({ message: subjectResolve.error });
     }
 
     await ensureClassesExist(classes);
+    await ensureSubjectExists(subjectResolve.subject);
 
     const teacher = await User.findOneAndUpdate(
       { _id: req.params.id, role: 'teacher' },
       {
         $set: {
           classes,
-          subjects: [subject],
+          subject: subjectResolve.subject,
+          subjects: [subjectResolve.subject],
         },
       },
       { new: true }
     );
 
     if (!teacher) {
-      return res.status(404).json({ message: 'المعلم غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
+
+    await syncTeacherInClasses({
+      teacherId: teacher._id,
+      classNames: classes,
+      subject: subjectResolve.subject,
+    });
 
     return res.json({ user: teacher.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحديث تعيين المعلم.' });
+    return res.status(500).json({ message: error.message || '???? ????? ????? ??????.' });
   }
 };
 
 const updateStudentAssignment = async (req, res) => {
   try {
     const classes = req.body?.className ? [req.body.className] : req.body?.classes || [];
-    const { className, error } = resolveStudentClass(classes);
-    if (error) {
-      return res.status(400).json({ message: error });
+    const classResolve = resolveStudentClass(classes);
+    if (classResolve.error) {
+      return res.status(400).json({ message: classResolve.error });
     }
 
-    await ensureClassesExist([className]);
+    await ensureClassesExist([classResolve.className]);
 
     const student = await User.findOneAndUpdate(
       { _id: req.params.id, role: 'student' },
-      { $set: { classes: [className] } },
+      { $set: { classes: [classResolve.className] } },
       { new: true }
     );
 
     if (!student) {
-      return res.status(404).json({ message: 'الطالب غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
 
     return res.json({ user: student.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحديث صف الطالب.' });
+    return res.status(500).json({ message: error.message || '???? ????? ?? ??????.' });
   }
 };
 
@@ -388,6 +450,7 @@ const importUsers = async (req, res) => {
           password: entry?.password,
           classes: entry?.classes,
           subjects: entry?.subjects,
+          profilePicture: entry?.profilePicture,
         });
 
         if (error) {
@@ -408,7 +471,16 @@ const importUsers = async (req, res) => {
         }
 
         // eslint-disable-next-line no-await-in-loop
-        await User.create(payload);
+        const created = await User.create(payload);
+        if (role === 'teacher') {
+          // eslint-disable-next-line no-await-in-loop
+          await syncTeacherInClasses({
+            teacherId: created._id,
+            classNames: created.classes || [],
+            subject: created.subject || created.subjects?.[0] || '',
+          });
+        }
+
         addedCount += 1;
       }
     };
@@ -424,7 +496,7 @@ const importUsers = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر استيراد المستخدمين.' });
+    return res.status(500).json({ message: error.message || '???? ??????? ??????????.' });
   }
 };
 
@@ -441,17 +513,19 @@ const exportUsers = async (_req, res) => {
         name: user.name,
         password: '',
         classes: user.classes || [],
-        subjects: user.subjects || [],
+        subjects: user.subject ? [user.subject] : user.subjects || [],
+        profilePicture: user.profilePicture || user.avatarUrl || '',
       })),
       students: students.map((user) => ({
         email: user.email,
         name: user.name,
         password: '',
         classes: user.classes || [],
+        profilePicture: user.profilePicture || user.avatarUrl || '',
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تصدير المستخدمين.' });
+    return res.status(500).json({ message: error.message || '???? ????? ??????????.' });
   }
 };
 
@@ -469,3 +543,5 @@ module.exports = {
   updateTeacherAssignment,
   updateStudentAssignment,
 };
+
+

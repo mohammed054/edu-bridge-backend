@@ -1,23 +1,18 @@
-const FEEDBACK_CATEGORIES = [
+﻿const FEEDBACK_CATEGORIES = [
   {
-    key: 'technical_issue',
-    label: 'مشكلة تقنية',
-    options: [],
+    key: 'academic',
+    label: 'أكاديمي',
+    options: ['واجبات', 'اختبارات', 'مشاركة الصف', 'فهم الدرس'],
   },
   {
-    key: 'suggestion',
-    label: 'اقتراح',
-    options: [],
+    key: 'moral',
+    label: 'سلوكي',
+    options: ['احترام', 'التزام', 'تعاون', 'انضباط'],
   },
   {
-    key: 'complaint',
-    label: 'شكوى',
-    options: [],
-  },
-  {
-    key: 'question',
-    label: 'استفسار',
-    options: [],
+    key: 'idfk',
+    label: 'أخرى',
+    options: ['إداري', 'تقني', 'اقتراح عام'],
   },
 ];
 

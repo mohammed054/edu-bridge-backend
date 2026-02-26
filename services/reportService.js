@@ -1,5 +1,7 @@
-const ClassModel = require('../models/Class');
+﻿const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
+const Homework = require('../models/Homework');
+const Subject = require('../models/Subject');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
@@ -28,7 +30,7 @@ const buildFeedbackTotalsByStudent = async () => {
 
   return grouped.map((item) => ({
     id: String(item._id),
-    name: studentById[String(item._id)]?.name || 'طالب غير معروف',
+    name: studentById[String(item._id)]?.name || '???? ??? ?????',
     email: studentById[String(item._id)]?.email || '',
     classes: studentById[String(item._id)]?.classes || [],
     total: item.total,
@@ -48,7 +50,7 @@ const buildFeedbackTotalsByTeacher = async () => {
 
   const teachers = await User.find(
     { _id: { $in: grouped.map((item) => item._id) }, role: 'teacher' },
-    { name: 1, email: 1, classes: 1, subjects: 1 }
+    { name: 1, email: 1, classes: 1, subject: 1, subjects: 1 }
   ).lean();
 
   const teacherById = teachers.reduce((acc, item) => {
@@ -58,10 +60,12 @@ const buildFeedbackTotalsByTeacher = async () => {
 
   return grouped.map((item) => ({
     id: String(item._id),
-    name: teacherById[String(item._id)]?.name || 'معلم غير معروف',
+    name: teacherById[String(item._id)]?.name || '???? ??? ?????',
     email: teacherById[String(item._id)]?.email || '',
     classes: teacherById[String(item._id)]?.classes || [],
-    subjects: teacherById[String(item._id)]?.subjects || [],
+    subjects: teacherById[String(item._id)]?.subject
+      ? [teacherById[String(item._id)].subject]
+      : teacherById[String(item._id)]?.subjects || [],
     total: item.total,
   }));
 };
@@ -74,15 +78,14 @@ const buildFeedbackTotalsByClass = async () => {
   ]);
 
   return grouped.map((item) => ({
-    className: item._id || 'غير محدد',
+    className: item._id || '??? ????',
     total: item.total,
   }));
 };
 
 const buildCategoryBreakdown = async () => {
   const grouped = await Feedback.aggregate([
-    { $unwind: { path: '$categories', preserveNullAndEmptyArrays: false } },
-    { $group: { _id: '$categories', total: { $sum: 1 } } },
+    { $group: { _id: '$category', total: { $sum: 1 } } },
   ]);
 
   const base = FEEDBACK_CATEGORY_KEYS.reduce((acc, key) => {
@@ -91,7 +94,7 @@ const buildCategoryBreakdown = async () => {
   }, {});
 
   grouped.forEach((item) => {
-    if (Object.prototype.hasOwnProperty.call(base, item._id)) {
+    if (item._id && Object.prototype.hasOwnProperty.call(base, item._id)) {
       base[item._id] = item.total;
     }
   });
@@ -145,19 +148,51 @@ const buildExamSummaryByClass = async () => {
     });
   });
 
-  return Object.values(classMap).map((item) => {
-    const subjectSummary = Object.entries(item.subjects).map(([subject, scoreData]) => ({
-      subject,
-      averageScore: scoreData.count ? Number((scoreData.total / scoreData.count).toFixed(2)) : 0,
-      count: scoreData.count,
-    }));
-    return {
-      className: item.className,
-      marksCount: item.marksCount,
-      averageScore: item.marksCount ? Number((item.averageScore / item.marksCount).toFixed(2)) : 0,
-      subjectSummary: subjectSummary.sort((a, b) => b.count - a.count),
-    };
+  return Object.values(classMap).map((item) => ({
+    className: item.className,
+    marksCount: item.marksCount,
+    averageScore: item.marksCount ? Number((item.averageScore / item.marksCount).toFixed(2)) : 0,
+    subjectSummary: Object.entries(item.subjects)
+      .map(([subject, scoreData]) => ({
+        subject,
+        averageScore: scoreData.count ? Number((scoreData.total / scoreData.count).toFixed(2)) : 0,
+        count: scoreData.count,
+      }))
+      .sort((a, b) => b.count - a.count),
+  }));
+};
+
+const buildHomeworkSummaryByClass = async () => {
+  const docs = await Homework.find({}, { className: 1, subject: 1, assignments: 1, maxMarks: 1 }).lean();
+  const grouped = {};
+
+  docs.forEach((item) => {
+    if (!grouped[item.className]) {
+      grouped[item.className] = {
+        className: item.className,
+        totalHomework: 0,
+        gradedAssignments: 0,
+        averageScore: 0,
+      };
+    }
+
+    grouped[item.className].totalHomework += 1;
+
+    (item.assignments || []).forEach((assignment) => {
+      if (assignment.score === null || assignment.score === undefined) {
+        return;
+      }
+      grouped[item.className].gradedAssignments += 1;
+      grouped[item.className].averageScore += Number(assignment.score || 0);
+    });
   });
+
+  return Object.values(grouped).map((entry) => ({
+    ...entry,
+    averageScore: entry.gradedAssignments
+      ? Number((entry.averageScore / entry.gradedAssignments).toFixed(2))
+      : 0,
+  }));
 };
 
 const buildSurveySummary = async () => {
@@ -190,12 +225,15 @@ const buildSurveySummary = async () => {
 };
 
 const buildAdminReports = async () => {
-  const [classesCount, studentsCount, teachersCount, totalFeedbacks] = await Promise.all([
-    ClassModel.countDocuments(),
-    User.countDocuments({ role: 'student' }),
-    User.countDocuments({ role: 'teacher' }),
-    Feedback.countDocuments(),
-  ]);
+  const [classesCount, studentsCount, teachersCount, totalFeedbacks, subjectsCount, homeworksCount] =
+    await Promise.all([
+      ClassModel.countDocuments(),
+      User.countDocuments({ role: 'student' }),
+      User.countDocuments({ role: 'teacher' }),
+      Feedback.countDocuments(),
+      Subject.countDocuments(),
+      Homework.countDocuments(),
+    ]);
 
   const [
     feedbackTotalsByStudent,
@@ -204,6 +242,7 @@ const buildAdminReports = async () => {
     categoryBreakdown,
     attendanceAndBehaviorByStudent,
     examSummaryByClass,
+    homeworkSummaryByClass,
     surveys,
   ] = await Promise.all([
     buildFeedbackTotalsByStudent(),
@@ -212,15 +251,19 @@ const buildAdminReports = async () => {
     buildCategoryBreakdown(),
     buildAttendanceBehaviorByStudent(),
     buildExamSummaryByClass(),
+    buildHomeworkSummaryByClass(),
     buildSurveySummary(),
   ]);
 
   return {
+    generatedAt: new Date().toISOString(),
     totals: {
       classes: classesCount,
       students: studentsCount,
       teachers: teachersCount,
       feedbacks: totalFeedbacks,
+      subjects: subjectsCount,
+      homeworks: homeworksCount,
     },
     feedbackTotalsByStudent,
     feedbackTotalsByTeacher,
@@ -228,6 +271,7 @@ const buildAdminReports = async () => {
     categoryBreakdown,
     attendanceAndBehaviorByStudent,
     examSummaryByClass,
+    homeworkSummaryByClass,
     surveys,
   };
 };
@@ -235,3 +279,5 @@ const buildAdminReports = async () => {
 module.exports = {
   buildAdminReports,
 };
+
+

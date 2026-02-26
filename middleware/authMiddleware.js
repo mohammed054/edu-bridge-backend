@@ -1,11 +1,17 @@
 ﻿const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const verifyToken = async (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const [scheme, token] = authHeader.split(' ');
-
+const ensureBearerToken = (authHeader = '') => {
+  const [scheme, token] = String(authHeader).split(' ');
   if (scheme !== 'Bearer' || !token) {
+    return null;
+  }
+  return token;
+};
+
+const verifyToken = async (req, res, next) => {
+  const token = ensureBearerToken(req.headers.authorization);
+  if (!token) {
     return res.status(401).json({ message: 'رأس التفويض غير صالح.' });
   }
 
@@ -21,18 +27,24 @@ const verifyToken = async (req, res, next) => {
       return res.status(403).json({ message: 'عدم تطابق صلاحية الدور.' });
     }
 
-    const userClasses = Array.isArray(user.classes) ? user.classes : [];
-    const userSubjects = Array.isArray(user.subjects) ? user.subjects : [];
-
     req.user = {
       id: String(user._id),
       role: user.role,
       email: user.email || '',
       username: user.username || '',
-      name: user.name,
-      avatarUrl: user.avatarUrl || '',
-      classes: user.role === 'student' ? userClasses.slice(0, 1) : userClasses,
-      subjects: user.role === 'teacher' ? userSubjects.slice(0, 1) : userSubjects,
+      name: user.name || '',
+      profilePicture: user.profilePicture || user.avatarUrl || '',
+      classes: Array.isArray(user.classes)
+        ? user.role === 'student'
+          ? user.classes.slice(0, 1)
+          : user.classes
+        : [],
+      subjects: Array.isArray(user.subjects)
+        ? user.role === 'teacher'
+          ? user.subjects.slice(0, 1)
+          : user.subjects
+        : [],
+      subject: user.subject || user.subjects?.[0] || '',
     };
 
     return next();
@@ -53,8 +65,15 @@ const authorize = (...roles) => (req, res, next) => {
   return next();
 };
 
+const adminOnly = authorize('admin');
+const teacherOnly = authorize('teacher');
+const studentOnly = authorize('student');
+
 module.exports = {
   verifyToken,
   authenticate: verifyToken,
   authorize,
+  adminOnly,
+  teacherOnly,
+  studentOnly,
 };

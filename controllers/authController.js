@@ -5,11 +5,13 @@ const {
   normalizeIdentifier,
   normalizeEmail,
   validateEmailByRole,
+  validateAdminIdentifier,
+  ADMIN_USERNAME,
 } = require('../utils/userValidation');
 
 const resolveJwtOptions = () => {
   const raw = String(process.env.JWT_EXPIRES_IN || '').trim().toLowerCase();
-  if (!raw || raw === '0' || raw === 'false' || raw === 'none' || raw === 'off') {
+  if (!raw || ['0', 'false', 'none', 'off'].includes(raw)) {
     return undefined;
   }
 
@@ -56,7 +58,7 @@ const loginStudent = async (req, res) => {
 
     const user = await User.findOne({ role: 'student', email });
     if (!user) {
-      return res.status(401).json({ message: 'البريد الإلكتروني غير مسجل كطالب.' });
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
     }
 
     if (!isStudentLoginTestMode()) {
@@ -81,6 +83,7 @@ const loginTeacher = async (req, res) => {
     if (emailError) {
       return res.status(400).json({ message: emailError });
     }
+
     if (!password) {
       return res.status(400).json({ message: 'كلمة المرور مطلوبة.' });
     }
@@ -106,16 +109,16 @@ const loginAdmin = async (req, res) => {
     const identifier = normalizeIdentifier(req.body?.identifier || req.body?.email).toLowerCase();
     const password = String(req.body?.password || '');
 
-    if (!identifier || !password) {
-      return res.status(400).json({ message: 'بيانات الدخول مطلوبة.' });
+    const identifierError = validateAdminIdentifier(identifier);
+    if (identifierError) {
+      return res.status(400).json({ message: identifierError });
     }
 
-    const isEmail = identifier.includes('@');
-    const query = isEmail
-      ? { role: 'admin', email: normalizeEmail(identifier) }
-      : { role: 'admin', username: identifier };
-    const user = await User.findOne(query);
+    if (!password) {
+      return res.status(400).json({ message: 'كلمة المرور مطلوبة.' });
+    }
 
+    const user = await User.findOne({ role: 'admin', username: ADMIN_USERNAME });
     if (!user) {
       return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
     }

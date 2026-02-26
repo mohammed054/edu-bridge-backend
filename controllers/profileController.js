@@ -1,4 +1,5 @@
-const Feedback = require('../models/Feedback');
+﻿const Feedback = require('../models/Feedback');
+const Homework = require('../models/Homework');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
@@ -16,7 +17,7 @@ const hasSubjectAccess = (teacherSubjects, subject) =>
 
 const buildMarksAnalysisPlaceholder = (examMarks) => ({
   implemented: false,
-  message: 'تحليل الدرجات التفصيلي غير مفعل حالياً.',
+  message: '????? ??????? ???????? ??? ???? ??????.',
   marksCount: examMarks.length,
 });
 
@@ -27,6 +28,10 @@ const buildCategorySummary = (feedbackReceived) => {
   }, {});
 
   feedbackReceived.forEach((item) => {
+    if (item.category && Object.prototype.hasOwnProperty.call(base, item.category)) {
+      base[item.category] += 1;
+    }
+
     (item.categories || []).forEach((categoryKey) => {
       if (Object.prototype.hasOwnProperty.call(base, categoryKey)) {
         base[categoryKey] += 1;
@@ -37,6 +42,29 @@ const buildCategorySummary = (feedbackReceived) => {
   return base;
 };
 
+const mapHomeworkForStudent = (homeworkDocs, studentId) =>
+  homeworkDocs.map((item) => {
+    const assignment = (item.assignments || []).find(
+      (entry) => String(entry.studentId) === String(studentId)
+    );
+
+    return {
+      id: String(item._id),
+      className: item.className,
+      subject: item.subject,
+      title: item.title,
+      description: item.description || '',
+      dueDate: item.dueDate,
+      maxMarks: item.maxMarks,
+      status: assignment?.status || 'pending',
+      score: assignment?.score ?? null,
+      assignmentUpdatedAt: assignment?.updatedAt || null,
+      teacherId: item.teacherId ? String(item.teacherId) : '',
+      teacherName: item.teacherName || '',
+      createdAt: item.createdAt,
+    };
+  });
+
 const getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -44,31 +72,31 @@ const getStudentProfile = async (req, res) => {
     const targetStudent = await User.findOne({ _id: studentId, role: 'student' }).lean();
 
     if (!targetStudent) {
-      return res.status(404).json({ message: 'الطالب غير موجود.' });
+      return res.status(404).json({ message: '?????? ??? ?????.' });
     }
 
     if (req.user.role === 'student' && String(req.user.id) !== String(targetStudent._id)) {
-      return res.status(403).json({ message: 'يمكن للطالب الوصول إلى ملفه فقط.' });
+      return res.status(403).json({ message: '???? ?????? ?????? ??? ???? ???.' });
     }
 
     if (req.user.role === 'teacher' && !canTeacherAccessStudent(req.user, targetStudent)) {
-      return res.status(403).json({ message: 'يمكن للمعلم الوصول لطلاب صفوفه فقط.' });
+      return res.status(403).json({ message: '???? ?????? ?????? ????? ????? ???.' });
     }
 
     if (!['student', 'teacher', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'ليس لديك صلاحية الوصول.' });
+      return res.status(403).json({ message: '???? ???? ?????? ??????.' });
     }
 
     const feedbackQuery = {
       studentId: targetStudent._id,
       feedbackType: { $in: ['teacher_feedback', 'admin_feedback'] },
     };
+
     if (subjectFilter) {
       feedbackQuery.subject = subjectFilter;
     }
 
     const feedbackReceivedRaw = await Feedback.find(feedbackQuery).sort({ createdAt: -1 }).lean();
-
     const teacherRestricted = req.user.role === 'teacher';
 
     const feedbackReceived = teacherRestricted
@@ -80,14 +108,32 @@ const getStudentProfile = async (req, res) => {
     const examMarksRaw = [...(targetStudent.examMarks || [])].sort(
       (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
     );
+
     const examMarks = examMarksRaw.filter((mark) => {
       if (subjectFilter && String(mark.subject || '').toLowerCase() !== subjectFilter.toLowerCase()) {
         return false;
       }
+
       if (teacherRestricted && mark.subject) {
         return hasSubjectAccess(req.user.subjects || [], mark.subject);
       }
+
       return true;
+    });
+
+    const homeworkQuery = {
+      className: { $in: targetStudent.classes || [] },
+    };
+    if (subjectFilter) {
+      homeworkQuery.subject = subjectFilter;
+    }
+
+    const homeworkDocs = await Homework.find(homeworkQuery).sort({ createdAt: -1 }).lean();
+    const homework = mapHomeworkForStudent(homeworkDocs, targetStudent._id).filter((item) => {
+      if (!teacherRestricted) {
+        return true;
+      }
+      return item.subject ? hasSubjectAccess(req.user.subjects || [], item.subject) : true;
     });
 
     let surveyResponses = [];
@@ -112,7 +158,7 @@ const getStudentProfile = async (req, res) => {
         surveyResponses = responseDocs.map((item) => ({
           id: String(item._id),
           surveyId: String(item.surveyId),
-          surveyName: surveyMap[String(item.surveyId)]?.name || 'استطلاع',
+          surveyName: surveyMap[String(item.surveyId)]?.name || '???????',
           surveyDescription: surveyMap[String(item.surveyId)]?.description || '',
           answers: item.answers || [],
           submittedAt: item.createdAt,
@@ -120,17 +166,19 @@ const getStudentProfile = async (req, res) => {
       }
     }
 
-    const responsePayload = {
+    return res.json({
       student: {
         id: String(targetStudent._id),
         name: targetStudent.name,
         email: targetStudent.email || '',
         classes: targetStudent.classes || [],
-        avatarUrl: targetStudent.avatarUrl || '',
+        profilePicture: targetStudent.profilePicture || targetStudent.avatarUrl || '',
+        avatarUrl: targetStudent.profilePicture || targetStudent.avatarUrl || '',
       },
       absentDays: Number(targetStudent.absentDays || 0),
       negativeReports: Number(targetStudent.negativeReports || 0),
       examMarks,
+      homework,
       marksAnalysis: buildMarksAnalysisPlaceholder(examMarks),
       categorySummary: buildCategorySummary(feedbackReceived),
       feedbackReceived: feedbackReceived.map((item) => ({
@@ -141,9 +189,12 @@ const getStudentProfile = async (req, res) => {
         adminName: item.adminName || '',
         className: item.className || '',
         subject: item.subject || '',
+        category: item.category || '',
+        subcategory: item.subcategory || '',
         categories: item.categories || [],
         categoryDetails: item.categoryDetails || {},
-        content: item.content || item.message || '',
+        AIAnalysis: item.AIAnalysis || {},
+        content: item.content || item.message || item.text || '',
         tags: item.tags || [],
         notes: item.notes || '',
         suggestion: item.suggestion || '',
@@ -153,14 +204,14 @@ const getStudentProfile = async (req, res) => {
       visibility: {
         teacherRestricted,
       },
-    };
-
-    return res.json(responsePayload);
+    });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل الملف الشخصي.' });
+    return res.status(500).json({ message: error.message || '???? ????? ????? ??????.' });
   }
 };
 
 module.exports = {
   getStudentProfile,
 };
+
+
