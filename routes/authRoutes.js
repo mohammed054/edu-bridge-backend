@@ -3,6 +3,7 @@ const {
   login,
   loginStudent,
   loginTeacher,
+  loginParent,
   loginAdmin,
   getCurrentUser,
   logout,
@@ -15,6 +16,7 @@ const router = express.Router();
 router.post('/login', loginRateLimiter, login);
 router.post('/login/student', loginRateLimiter, loginStudent);
 router.post('/login/teacher', loginRateLimiter, loginTeacher);
+router.post('/login/parent', loginRateLimiter, loginParent);
 router.post('/login/admin', loginRateLimiter, loginAdmin);
 router.get('/me', verifyToken, getCurrentUser);
 router.post('/logout', verifyToken, logout);

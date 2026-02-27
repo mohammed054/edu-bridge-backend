@@ -120,7 +120,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['admin', 'teacher', 'student'],
+      enum: ['admin', 'teacher', 'student', 'parent'],
       required: true,
     },
     isActive: {
@@ -153,6 +153,11 @@ const userSchema = new mongoose.Schema(
     },
     subjects: {
       type: [String],
+      default: [],
+    },
+    linkedStudentIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
       default: [],
     },
     feedbackHistory: {
@@ -195,6 +200,10 @@ userSchema.pre('save', function normalizeTeacherSubject(next) {
     this.classes = this.classes.slice(0, 1);
   }
 
+  if (this.role !== 'parent' && (this.linkedStudentIds || []).length) {
+    this.linkedStudentIds = [];
+  }
+
   next();
 });
 
@@ -218,6 +227,7 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     className: classes[0] || '',
     subject,
     subjects: subject ? [subject] : [],
+    linkedStudentIds: (this.linkedStudentIds || []).map((item) => String(item)),
     absentDays: this.absentDays || 0,
     negativeReports: this.negativeReports || 0,
   };

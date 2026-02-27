@@ -1,18 +1,59 @@
 ﻿const FEEDBACK_CATEGORIES = [
   {
     key: 'academic',
-    label: 'أكاديمي',
-    options: ['واجبات', 'اختبارات', 'مشاركة الصف', 'فهم الدرس'],
+    label: 'Academic',
+    options: [
+      "Didn't understand topic",
+      'Teacher explained well',
+      'Need additional examples',
+      'Need revision support',
+    ],
   },
   {
+    key: 'homework',
+    label: 'Homework',
+    options: [
+      "Didn't submit homework",
+      'Struggled with assignment',
+      'Completed on time',
+      'Need help with time planning',
+    ],
+  },
+  {
+    key: 'behavior',
+    label: 'Behavior',
+    options: [
+      'Distracted in class',
+      'Helped classmates',
+      'Showed respectful conduct',
+      'Needs behavior follow-up',
+    ],
+  },
+  {
+    key: 'participation',
+    label: 'Participation',
+    options: [
+      "Didn't answer questions",
+      'Volunteered answers',
+      'Participated consistently',
+      'Needs encouragement to engage',
+    ],
+  },
+  {
+    key: 'other',
+    label: 'Other',
+    options: ['Custom note'],
+  },
+  // Legacy keys kept for existing records compatibility.
+  {
     key: 'moral',
-    label: 'سلوكي',
-    options: ['احترام', 'التزام', 'تعاون', 'انضباط'],
+    label: 'Behavior (Legacy)',
+    options: ['General behavior note'],
   },
   {
     key: 'idfk',
-    label: 'أخرى',
-    options: ['إداري', 'تقني', 'اقتراح عام'],
+    label: 'Other (Legacy)',
+    options: ['General note'],
   },
 ];
 

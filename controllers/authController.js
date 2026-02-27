@@ -118,6 +118,40 @@ const loginTeacher = async (req, res) => {
   }
 };
 
+const loginParent = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email || req.body?.identifier);
+    const password = String(req.body?.password || '');
+    const emailError = validateEmailByRole('parent', email);
+
+    if (emailError) {
+      return res.status(400).json({ message: emailError });
+    }
+
+    if (!password) {
+      return res.status(400).json({ message: 'كلمة المرور مطلوبة.' });
+    }
+
+    const user = await User.findOne({ role: 'parent', email });
+    if (!user) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'تم تعطيل هذا الحساب.' });
+    }
+
+    const validPassword = await verifyPassword(password, user);
+    if (!validPassword) {
+      return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    return res.json(buildAuthResponse(user));
+  } catch (error) {
+    return sendServerError(res, error, 'تعذر تسجيل دخول ولي الأمر.');
+  }
+};
+
 const loginAdmin = async (req, res) => {
   try {
     const identifier = normalizeIdentifier(req.body?.identifier || req.body?.email).toLowerCase();
@@ -167,6 +201,10 @@ const login = async (req, res) => {
     return loginAdmin(req, res);
   }
 
+  if (portal === 'parent') {
+    return loginParent(req, res);
+  }
+
   const identifier = normalizeIdentifier(req.body?.identifier || req.body?.email).toLowerCase();
   const hasPassword = Boolean(String(req.body?.password || '').trim());
 
@@ -214,6 +252,7 @@ module.exports = {
   login,
   loginStudent,
   loginTeacher,
+  loginParent,
   loginAdmin,
   getCurrentUser,
   logout,

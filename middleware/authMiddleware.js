@@ -59,6 +59,9 @@ const verifyToken = async (req, res, next) => {
           : user.subjects
         : [],
       subject: user.subject || user.subjects?.[0] || '',
+      linkedStudentIds: Array.isArray(user.linkedStudentIds)
+        ? user.linkedStudentIds.map((item) => String(item))
+        : [],
     };
 
     return next();
@@ -82,6 +85,7 @@ const authorize = (...roles) => (req, res, next) => {
 const adminOnly = authorize('admin');
 const teacherOnly = authorize('teacher');
 const studentOnly = authorize('student');
+const parentOnly = authorize('parent');
 
 module.exports = {
   verifyToken,
@@ -90,4 +94,5 @@ module.exports = {
   adminOnly,
   teacherOnly,
   studentOnly,
+  parentOnly,
 };

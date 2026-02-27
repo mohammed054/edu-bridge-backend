@@ -3,7 +3,7 @@ const { FEEDBACK_CATEGORY_KEYS } = require('../constants/feedbackCatalog');
 
 const replySchema = new mongoose.Schema(
   {
-    senderType: { type: String, enum: ['teacher', 'student', 'admin'], required: true },
+    senderType: { type: String, enum: ['teacher', 'student', 'admin', 'parent'], required: true },
     text: { type: String, required: true, trim: true },
     createdAt: { type: Date, default: Date.now },
   },
@@ -21,10 +21,10 @@ const feedbackSchema = new mongoose.Schema(
     adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     adminName: { type: String, default: '', trim: true },
     senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    senderRole: { type: String, enum: ['teacher', 'student', 'admin'], required: true },
+    senderRole: { type: String, enum: ['teacher', 'student', 'admin', 'parent'], required: true },
     receiverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    receiverRole: { type: String, enum: ['teacher', 'student', 'admin'], required: true },
-    senderType: { type: String, enum: ['teacher', 'student', 'admin'], required: true },
+    receiverRole: { type: String, enum: ['teacher', 'student', 'admin', 'parent'], required: true },
+    senderType: { type: String, enum: ['teacher', 'student', 'admin', 'parent'], required: true },
     feedbackType: {
       type: String,
       enum: [
@@ -32,7 +32,9 @@ const feedbackSchema = new mongoose.Schema(
         'admin_feedback',
         'student_to_teacher',
         'student_to_admin',
+        'student_to_parent',
         'student_reply',
+        'parent_reply',
       ],
       default: 'teacher_feedback',
     },
@@ -63,6 +65,40 @@ const feedbackSchema = new mongoose.Schema(
       default: {
         status: 'pending',
       },
+    },
+    aiGenerated: {
+      type: Boolean,
+      default: false,
+    },
+    urgency: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'low',
+    },
+    trendFlags: {
+      type: [String],
+      default: [],
+    },
+    aiSummary: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    visualSummary: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    readBy: {
+      type: [
+        new mongoose.Schema(
+          {
+            userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+            role: { type: String, enum: ['teacher', 'student', 'admin', 'parent'], required: true },
+            readAt: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
     },
     tags: { type: [String], default: [] },
     notes: { type: String, default: '', trim: true },
