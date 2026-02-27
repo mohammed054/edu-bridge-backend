@@ -28,6 +28,25 @@ const assignmentSchema = new mongoose.Schema(
       default: 100,
       min: 1,
     },
+    teacherComment: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    submissionText: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    submissionAttachment: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
     updatedAt: {
       type: Date,
       default: Date.now,
@@ -54,6 +73,11 @@ const homeworkSchema = new mongoose.Schema(
       trim: true,
     },
     description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    attachmentName: {
       type: String,
       default: '',
       trim: true,

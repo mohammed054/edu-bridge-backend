@@ -7,8 +7,13 @@ const {
   deleteExamMark,
   listTeacherHomework,
   createHomework,
+  updateHomework,
   updateHomeworkAssignment,
   deleteHomework,
+  listTeacherAnnouncements,
+  createTeacherAnnouncement,
+  updateTeacherAnnouncement,
+  deleteTeacherAnnouncement,
 } = require('../controllers/teacherExamController');
 
 router.use(verifyToken, teacherOnly);
@@ -20,8 +25,14 @@ router.delete('/exams', deleteExamMark);
 
 router.get('/homework', listTeacherHomework);
 router.post('/homework', createHomework);
-router.patch('/homework/:id', updateHomeworkAssignment);
+router.patch('/homework/:id', updateHomework);
+router.patch('/homework/:id/assignments', updateHomeworkAssignment);
 router.delete('/homework/:id', deleteHomework);
+
+router.get('/announcements', listTeacherAnnouncements);
+router.post('/announcements', createTeacherAnnouncement);
+router.patch('/announcements/:id', updateTeacherAnnouncement);
+router.delete('/announcements/:id', deleteTeacherAnnouncement);
 
 module.exports = router;
 
