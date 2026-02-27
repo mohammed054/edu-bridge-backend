@@ -61,6 +61,10 @@ const loginStudent = async (req, res) => {
       return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'تم تعطيل هذا الحساب.' });
+    }
+
     if (!isStudentLoginTestMode()) {
       const validPassword = await verifyPassword(password, user);
       if (!validPassword) {
@@ -93,6 +97,10 @@ const loginTeacher = async (req, res) => {
       return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'تم تعطيل هذا الحساب.' });
+    }
+
     const validPassword = await verifyPassword(password, user);
     if (!validPassword) {
       return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
@@ -121,6 +129,10 @@ const loginAdmin = async (req, res) => {
     const user = await User.findOne({ role: 'admin', username: ADMIN_USERNAME });
     if (!user) {
       return res.status(401).json({ message: 'بيانات الدخول غير صحيحة.' });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'تم تعطيل هذا الحساب.' });
     }
 
     const validPassword = await verifyPassword(password, user);

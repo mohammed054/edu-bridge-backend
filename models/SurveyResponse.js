@@ -1,13 +1,35 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const surveyAnswerSchema = new mongoose.Schema(
   {
     questionId: { type: String, required: true, trim: true },
     textAnswer: { type: String, default: '', trim: true },
     selectedOptions: { type: [String], default: [] },
+    ratingValue: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 5,
+    },
   },
   { _id: false }
 );
+
+surveyAnswerSchema.pre('validate', function normalizeAnswer(next) {
+  this.textAnswer = String(this.textAnswer || '').trim();
+  this.selectedOptions = [...new Set((this.selectedOptions || []).map((item) => String(item || '').trim()).filter(Boolean))];
+
+  if (this.ratingValue === '' || this.ratingValue === undefined) {
+    this.ratingValue = null;
+  }
+
+  if (this.ratingValue !== null) {
+    const numeric = Number(this.ratingValue);
+    this.ratingValue = Number.isNaN(numeric) ? null : Math.round(numeric);
+  }
+
+  next();
+});
 
 const surveyResponseSchema = new mongoose.Schema(
   {

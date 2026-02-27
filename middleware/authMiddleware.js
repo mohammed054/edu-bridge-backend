@@ -23,6 +23,10 @@ const verifyToken = async (req, res, next) => {
       return res.status(401).json({ message: 'المستخدم المرتبط بالجلسة غير صالح.' });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'تم تعطيل الحساب.' });
+    }
+
     if (decoded.role && decoded.role !== user.role) {
       return res.status(403).json({ message: 'عدم تطابق صلاحية الدور.' });
     }
@@ -30,6 +34,7 @@ const verifyToken = async (req, res, next) => {
     req.user = {
       id: String(user._id),
       role: user.role,
+      isActive: user.isActive !== false,
       email: user.email || '',
       username: user.username || '',
       name: user.name || '',

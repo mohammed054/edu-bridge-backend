@@ -123,6 +123,10 @@ const userSchema = new mongoose.Schema(
       enum: ['admin', 'teacher', 'student'],
       required: true,
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
     profilePicture: {
       type: String,
       default: '',
@@ -201,6 +205,7 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     email: this.email || '',
     name: this.name,
     role: this.role,
+    isActive: this.isActive !== false,
     profilePicture,
     avatarUrl: profilePicture,
     classes: this.classes || [],

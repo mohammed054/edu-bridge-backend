@@ -1,48 +1,88 @@
-﻿const mongoose = require('mongoose');
+
+const mongoose = require('mongoose');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
 
+const QUESTION_TYPES = new Set(['multiple_choice', 'rating', 'text']);
+
 const asTrimmed = (value) => String(value || '').trim();
+
+const normalizeQuestionType = (value) => {
+  const raw = asTrimmed(value).toLowerCase();
+
+  if (raw === 'multiple') {
+    return 'multiple_choice';
+  }
+
+  if (QUESTION_TYPES.has(raw)) {
+    return raw;
+  }
+
+  return 'text';
+};
 
 const normalizeAudience = (value) => {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return [...new Set(value.map((item) => asTrimmed(item)).filter((item) => ['student', 'teacher'].includes(item)))];
+  return [
+    ...new Set(
+      value
+        .map((item) => asTrimmed(item).toLowerCase())
+        .filter((item) => ['student', 'teacher'].includes(item))
+    ),
+  ];
 };
 
-const normalizeQuestions = (value) => {
-  if (!Array.isArray(value)) {
-    return [];
+const normalizeQuestionOptions = (inputOptions) =>
+  [...new Set((inputOptions || []).map((item) => asTrimmed(item)).filter(Boolean))];
+
+const normalizeQuestions = (inputQuestions) => {
+  if (!Array.isArray(inputQuestions)) {
+    return { questions: [], errors: ['Questions must be an array.'] };
   }
 
-  return value
-    .map((item, index) => {
-      const type = asTrimmed(item?.type) === 'multiple' ? 'multiple' : 'text';
-      const questionId = asTrimmed(item?.questionId) || `q_${index + 1}`;
-      const prompt = asTrimmed(item?.prompt);
-      const options =
-        type === 'multiple'
-          ? [...new Set((item?.options || []).map((entry) => asTrimmed(entry)).filter(Boolean))]
-          : [];
+  const output = [];
+  const errors = [];
 
-      if (!prompt) {
-        return null;
-      }
-      if (type === 'multiple' && options.length < 2) {
-        return null;
-      }
+  inputQuestions.forEach((item, index) => {
+    const questionId = asTrimmed(item?.questionId) || `q_${index + 1}`;
+    const questionText = asTrimmed(item?.questionText || item?.prompt);
+    const type = normalizeQuestionType(item?.type);
+    const required = Boolean(item?.required);
 
-      return {
-        questionId,
-        prompt,
-        type,
-        options,
-      };
-    })
-    .filter(Boolean);
+    let options = [];
+    if (type === 'multiple_choice') {
+      if (Array.isArray(item?.options)) {
+        options = normalizeQuestionOptions(item.options);
+      } else if (typeof item?.optionsText === 'string') {
+        options = normalizeQuestionOptions(item.optionsText.split(','));
+      }
+    }
+
+    if (!questionText) {
+      errors.push(`Question ${index + 1}: text is required.`);
+      return;
+    }
+
+    if (type === 'multiple_choice' && options.length < 2) {
+      errors.push(`Question ${index + 1}: multiple choice requires at least two options.`);
+      return;
+    }
+
+    output.push({
+      questionId,
+      questionText,
+      prompt: questionText,
+      type,
+      options,
+      required,
+    });
+  });
+
+  return { questions: output, errors };
 };
 
 const normalizeAssignedUsers = async (value, audience) => {
@@ -50,19 +90,23 @@ const normalizeAssignedUsers = async (value, audience) => {
     return [];
   }
 
+  const objectIds = value
+    .map((item) => {
+      try {
+        return new mongoose.Types.ObjectId(item);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (!objectIds.length) {
+    return [];
+  }
+
   const validUsers = await User.find(
     {
-      _id: {
-        $in: value
-          .map((item) => {
-            try {
-              return new mongoose.Types.ObjectId(item);
-            } catch {
-              return null;
-            }
-          })
-          .filter(Boolean),
-      },
+      _id: { $in: objectIds },
       role: { $in: audience },
     },
     { _id: 1 }
@@ -71,18 +115,39 @@ const normalizeAssignedUsers = async (value, audience) => {
   return validUsers.map((item) => item._id);
 };
 
-const surveyPayload = (survey, extra = {}) => ({
-  id: String(survey._id),
-  name: survey.name,
-  description: survey.description || '',
-  audience: survey.audience || [],
-  assignedUserIds: (survey.assignedUserIds || []).map((id) => String(id)),
-  questions: survey.questions || [],
-  isActive: Boolean(survey.isActive),
-  createdAt: survey.createdAt,
-  updatedAt: survey.updatedAt,
-  ...extra,
-});
+const normalizeSurveyQuestion = (question, index) => {
+  const questionId = asTrimmed(question?.questionId) || `q_${index + 1}`;
+  const questionText = asTrimmed(question?.questionText || question?.prompt);
+  const type = normalizeQuestionType(question?.type);
+  const options = type === 'multiple_choice' ? normalizeQuestionOptions(question?.options || []) : [];
+
+  return {
+    questionId,
+    questionText,
+    prompt: questionText,
+    type,
+    options,
+    required: Boolean(question?.required),
+  };
+};
+
+const surveyPayload = (survey, extra = {}) => {
+  const title = asTrimmed(survey.title || survey.name);
+
+  return {
+    id: String(survey._id),
+    title,
+    name: title,
+    description: survey.description || '',
+    audience: survey.audience || [],
+    assignedUserIds: (survey.assignedUserIds || []).map((id) => String(id)),
+    questions: (survey.questions || []).map(normalizeSurveyQuestion),
+    isActive: Boolean(survey.isActive),
+    createdAt: survey.createdAt,
+    updatedAt: survey.updatedAt,
+    ...extra,
+  };
+};
 
 const listAdminSurveys = async (_req, res) => {
   try {
@@ -95,6 +160,7 @@ const listAdminSurveys = async (_req, res) => {
         },
       },
     ]);
+
     const countBySurveyId = responseCounts.reduce((acc, item) => {
       acc[String(item._id)] = item.totalResponses;
       return acc;
@@ -106,31 +172,37 @@ const listAdminSurveys = async (_req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ???????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to load surveys.' });
   }
 };
 
 const createSurvey = async (req, res) => {
   try {
-    const name = asTrimmed(req.body?.name);
+    const title = asTrimmed(req.body?.title || req.body?.name);
     const description = asTrimmed(req.body?.description);
     const audience = normalizeAudience(req.body?.audience || []);
-    const questions = normalizeQuestions(req.body?.questions || []);
+    const { questions, errors } = normalizeQuestions(req.body?.questions || []);
 
-    if (!name) {
-      return res.status(400).json({ message: '??? ????????? ?????.' });
+    if (!title) {
+      return res.status(400).json({ message: 'Survey title is required.' });
     }
+
     if (!audience.length) {
-      return res.status(400).json({ message: '??? ????????? ??????.' });
+      return res.status(400).json({ message: 'At least one audience role is required.' });
     }
-    if (!questions.length) {
-      return res.status(400).json({ message: '??? ????? ???? ???? ???? ??? ?????.' });
+
+    if (!questions.length || errors.length) {
+      return res.status(400).json({
+        message: 'Survey questions are invalid.',
+        errors,
+      });
     }
 
     const assignedUserIds = await normalizeAssignedUsers(req.body?.assignedUserIds || [], audience);
 
     const created = await Survey.create({
-      name,
+      title,
+      name: title,
       description,
       audience,
       assignedUserIds,
@@ -141,7 +213,7 @@ const createSurvey = async (req, res) => {
 
     return res.status(201).json({ survey: surveyPayload(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ?????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to create survey.' });
   }
 };
 
@@ -149,37 +221,60 @@ const updateSurvey = async (req, res) => {
   try {
     const existing = await Survey.findById(req.params.id);
     if (!existing) {
-      return res.status(404).json({ message: '????????? ??? ?????.' });
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
-    const audience = req.body?.audience ? normalizeAudience(req.body?.audience || []) : existing.audience;
-    const questions = req.body?.questions ? normalizeQuestions(req.body?.questions || []) : existing.questions;
+    const nextAudience = req.body?.audience
+      ? normalizeAudience(req.body?.audience)
+      : normalizeAudience(existing.audience);
 
-    if (!audience.length) {
-      return res.status(400).json({ message: '??? ????????? ??????.' });
-    }
-    if (!questions.length) {
-      return res.status(400).json({ message: '??? ????? ???? ???? ???? ??? ?????.' });
+    if (!nextAudience.length) {
+      return res.status(400).json({ message: 'At least one audience role is required.' });
     }
 
-    const assignedUserIds = req.body?.assignedUserIds
-      ? await normalizeAssignedUsers(req.body?.assignedUserIds || [], audience)
-      : existing.assignedUserIds;
+    let nextQuestions = existing.questions;
+    if (req.body?.questions !== undefined) {
+      const { questions, errors } = normalizeQuestions(req.body?.questions);
+      if (!questions.length || errors.length) {
+        return res.status(400).json({
+          message: 'Survey questions are invalid.',
+          errors,
+        });
+      }
+      nextQuestions = questions;
+    }
 
-    existing.name = req.body?.name !== undefined ? asTrimmed(req.body.name) : existing.name;
-    existing.description =
-      req.body?.description !== undefined ? asTrimmed(req.body.description) : existing.description;
-    existing.audience = audience;
-    existing.questions = questions;
+    let assignedUserIds = existing.assignedUserIds;
+    if (req.body?.assignedUserIds !== undefined) {
+      assignedUserIds = await normalizeAssignedUsers(req.body?.assignedUserIds || [], nextAudience);
+    }
+
+    if (req.body?.title !== undefined || req.body?.name !== undefined) {
+      const nextTitle = asTrimmed(req.body?.title || req.body?.name);
+      if (!nextTitle) {
+        return res.status(400).json({ message: 'Survey title is required.' });
+      }
+      existing.title = nextTitle;
+      existing.name = nextTitle;
+    }
+
+    if (req.body?.description !== undefined) {
+      existing.description = asTrimmed(req.body.description);
+    }
+
+    existing.audience = nextAudience;
+    existing.questions = nextQuestions;
     existing.assignedUserIds = assignedUserIds;
+
     if (req.body?.isActive !== undefined) {
       existing.isActive = Boolean(req.body.isActive);
     }
 
     await existing.save();
+
     return res.json({ survey: surveyPayload(existing.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ?????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to update survey.' });
   }
 };
 
@@ -187,13 +282,13 @@ const deleteSurvey = async (req, res) => {
   try {
     const survey = await Survey.findByIdAndDelete(req.params.id);
     if (!survey) {
-      return res.status(404).json({ message: '????????? ??? ?????.' });
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
     await SurveyResponse.deleteMany({ surveyId: survey._id });
-    return res.json({ message: '?? ??? ????????? ?????.' });
+    return res.json({ success: true, deletedSurveyId: String(survey._id) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ??? ?????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to delete survey.' });
   }
 };
 
@@ -201,16 +296,15 @@ const listSurveyResponsesForAdmin = async (req, res) => {
   try {
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey) {
-      return res.status(404).json({ message: '????????? ??? ?????.' });
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
     const responses = await SurveyResponse.find({ surveyId: survey._id }).sort({ createdAt: -1 }).lean();
     const respondents = await User.find(
-      {
-        _id: { $in: responses.map((item) => item.respondentId) },
-      },
+      { _id: { $in: responses.map((item) => item.respondentId) } },
       { name: 1, email: 1, role: 1 }
     ).lean();
+
     const respondentById = respondents.reduce((acc, item) => {
       acc[String(item._id)] = item;
       return acc;
@@ -221,7 +315,7 @@ const listSurveyResponsesForAdmin = async (req, res) => {
       responses: responses.map((item) => ({
         id: String(item._id),
         respondentId: String(item.respondentId),
-        respondentName: respondentById[String(item.respondentId)]?.name || '??????',
+        respondentName: respondentById[String(item.respondentId)]?.name || 'Unknown',
         respondentEmail: respondentById[String(item.respondentId)]?.email || '',
         respondentRole: item.respondentRole,
         answers: item.answers || [],
@@ -229,10 +323,9 @@ const listSurveyResponsesForAdmin = async (req, res) => {
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ???? ?????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to fetch survey responses.' });
   }
 };
-
 const listAssignedSurveys = async (req, res) => {
   try {
     const query = {
@@ -247,6 +340,7 @@ const listAssignedSurveys = async (req, res) => {
       respondentId: req.user.id,
       respondentRole: req.user.role,
     }).lean();
+
     const responseBySurvey = responses.reduce((acc, item) => {
       acc[String(item.surveyId)] = item;
       return acc;
@@ -266,7 +360,7 @@ const listAssignedSurveys = async (req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ??????????? ???????.' });
+    return res.status(500).json({ message: error.message || 'Failed to load assigned surveys.' });
   }
 };
 
@@ -274,63 +368,109 @@ const submitSurveyResponse = async (req, res) => {
   try {
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey || !survey.isActive) {
-      return res.status(404).json({ message: '????????? ??? ?????.' });
+      return res.status(404).json({ message: 'Survey not found.' });
     }
 
     if (!(survey.audience || []).includes(req.user.role)) {
-      return res.status(403).json({ message: '?? ???? ?????? ???? ??? ??? ?????????.' });
+      return res.status(403).json({ message: 'You do not have access to this survey.' });
     }
 
     const assignedUserIds = (survey.assignedUserIds || []).map((id) => String(id));
     if (assignedUserIds.length && !assignedUserIds.includes(String(req.user.id))) {
-      return res.status(403).json({ message: '?? ??? ????? ??? ????????? ??.' });
+      return res.status(403).json({ message: 'This survey is not assigned to your account.' });
     }
 
-    const answersInput = Array.isArray(req.body?.answers) ? req.body.answers : [];
-    const questionMap = (survey.questions || []).reduce((acc, item) => {
-      acc[item.questionId] = item;
+    const inputAnswers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+    const inputByQuestionId = inputAnswers.reduce((acc, item) => {
+      const key = asTrimmed(item?.questionId);
+      if (key) {
+        acc[key] = item;
+      }
       return acc;
     }, {});
 
-    const answers = answersInput
-      .map((item) => {
-        const questionId = asTrimmed(item?.questionId);
-        const question = questionMap[questionId];
-        if (!question) {
-          return null;
+    const questions = (survey.questions || []).map(normalizeSurveyQuestion);
+    const normalizedAnswers = [];
+    const validationErrors = [];
+
+    questions.forEach((question, index) => {
+      const answer = inputByQuestionId[question.questionId] || {};
+
+      if (question.type === 'multiple_choice') {
+        const selectedOptions = normalizeQuestionOptions(answer?.selectedOptions || []).filter((item) =>
+          question.options.includes(item)
+        );
+
+        if (question.required && !selectedOptions.length) {
+          validationErrors.push(`Question ${index + 1}: at least one option is required.`);
+          return;
         }
 
-        if (question.type === 'multiple') {
-          const selectedOptions = [...new Set((item?.selectedOptions || []).map((entry) => asTrimmed(entry)))]
-            .filter(Boolean)
-            .filter((entry) => question.options.includes(entry));
-
-          if (!selectedOptions.length) {
-            return null;
-          }
-
-          return {
-            questionId,
+        if (selectedOptions.length) {
+          normalizedAnswers.push({
+            questionId: question.questionId,
             selectedOptions,
             textAnswer: '',
-          };
+            ratingValue: null,
+          });
         }
 
-        const textAnswer = asTrimmed(item?.textAnswer);
-        if (!textAnswer) {
-          return null;
+        return;
+      }
+
+      if (question.type === 'rating') {
+        const incomingRating =
+          answer?.ratingValue !== undefined && answer?.ratingValue !== null && answer?.ratingValue !== ''
+            ? Number(answer.ratingValue)
+            : null;
+
+        if (question.required && incomingRating === null) {
+          validationErrors.push(`Question ${index + 1}: rating is required.`);
+          return;
         }
 
-        return {
-          questionId,
+        if (incomingRating !== null) {
+          if (Number.isNaN(incomingRating) || incomingRating < 1 || incomingRating > 5) {
+            validationErrors.push(`Question ${index + 1}: rating must be between 1 and 5.`);
+            return;
+          }
+
+          normalizedAnswers.push({
+            questionId: question.questionId,
+            ratingValue: Math.round(incomingRating),
+            textAnswer: '',
+            selectedOptions: [],
+          });
+        }
+
+        return;
+      }
+
+      const textAnswer = asTrimmed(answer?.textAnswer);
+      if (question.required && !textAnswer) {
+        validationErrors.push(`Question ${index + 1}: answer text is required.`);
+        return;
+      }
+
+      if (textAnswer) {
+        normalizedAnswers.push({
+          questionId: question.questionId,
           textAnswer,
           selectedOptions: [],
-        };
-      })
-      .filter(Boolean);
+          ratingValue: null,
+        });
+      }
+    });
 
-    if (!answers.length) {
-      return res.status(400).json({ message: '??? ????? ????? ????? ????? ??? ?????.' });
+    if (validationErrors.length) {
+      return res.status(400).json({
+        message: 'Survey response validation failed.',
+        errors: validationErrors,
+      });
+    }
+
+    if (!normalizedAnswers.length) {
+      return res.status(400).json({ message: 'At least one answer is required.' });
     }
 
     const response = await SurveyResponse.findOneAndUpdate(
@@ -341,10 +481,14 @@ const submitSurveyResponse = async (req, res) => {
       {
         $set: {
           respondentRole: req.user.role,
-          answers,
+          answers: normalizedAnswers,
         },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
     ).lean();
 
     await Survey.updateOne({ _id: survey._id }, { $addToSet: { responses: response._id } });
@@ -358,7 +502,7 @@ const submitSurveyResponse = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ?? ?????????.' });
+    return res.status(500).json({ message: error.message || 'Failed to submit survey response.' });
   }
 };
 
@@ -371,5 +515,3 @@ module.exports = {
   listAssignedSurveys,
   submitSurveyResponse,
 };
-
-

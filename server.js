@@ -64,7 +64,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(securityHeaders);
-app.use(express.json({ limit: '250kb' }));
+app.use(express.json({ limit: '5mb' }));
 app.use(sanitizeRequest);
 
 app.get('/api/health', (_req, res) => {
@@ -101,7 +101,7 @@ app.use('/api/*', (req, res) => {
 app.use((err, _req, res, _next) => {
   const status = Number(err?.status || 500);
   const payload = {
-    message: status >= 500 ? '??? ??? ?? ??????.' : err.message,
+    message: status >= 500 ? 'حدث خطأ غير متوقع.' : err.message,
   };
   if (process.env.NODE_ENV !== 'production') {
     payload.debug = err.message;

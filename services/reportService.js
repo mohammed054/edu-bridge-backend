@@ -30,7 +30,7 @@ const buildFeedbackTotalsByStudent = async () => {
 
   return grouped.map((item) => ({
     id: String(item._id),
-    name: studentById[String(item._id)]?.name || '???? ??? ?????',
+    name: studentById[String(item._id)]?.name || 'غير متوفر',
     email: studentById[String(item._id)]?.email || '',
     classes: studentById[String(item._id)]?.classes || [],
     total: item.total,
@@ -60,7 +60,7 @@ const buildFeedbackTotalsByTeacher = async () => {
 
   return grouped.map((item) => ({
     id: String(item._id),
-    name: teacherById[String(item._id)]?.name || '???? ??? ?????',
+    name: teacherById[String(item._id)]?.name || 'غير متوفر',
     email: teacherById[String(item._id)]?.email || '',
     classes: teacherById[String(item._id)]?.classes || [],
     subjects: teacherById[String(item._id)]?.subject
@@ -78,7 +78,7 @@ const buildFeedbackTotalsByClass = async () => {
   ]);
 
   return grouped.map((item) => ({
-    className: item._id || '??? ????',
+    className: item._id || 'غير معروف',
     total: item.total,
   }));
 };
