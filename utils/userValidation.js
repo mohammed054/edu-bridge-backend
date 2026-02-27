@@ -33,14 +33,6 @@ const validateEmailByRole = (role, email) => {
     return 'صيغة البريد الإلكتروني غير صحيحة.';
   }
 
-  if (role === 'teacher' && !TEACHER_EMAIL_REGEX.test(value)) {
-    return 'بريد المعلم يجب أن يبدأ بـ tum وينتهي بـ @privatemoe.gov.ae.';
-  }
-
-  if (role === 'student' && !STUDENT_EMAIL_REGEX.test(value)) {
-    return 'بريد الطالب يجب أن يبدأ بـ stum وينتهي بـ @moe.sch.ae أو @privatemoe.gov.ae.';
-  }
-
   return null;
 };
 
