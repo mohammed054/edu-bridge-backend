@@ -215,13 +215,17 @@ const upsertExamMark = async (req, res) => {
 
     const normalizedScore = clamp((rawScore / maxMarks) * 100, 0, 100);
 
+    const normalizedExamTitle = examTitle || 'اختبار';
+
     const existingIndex = (student.examMarks || []).findIndex(
-      (item) => String(item.subject || '').toLowerCase() === subject.toLowerCase()
+      (item) =>
+        String(item.subject || '').toLowerCase() === subject.toLowerCase() &&
+        String(item.examTitle || 'اختبار').toLowerCase() === normalizedExamTitle.toLowerCase()
     );
 
     const nextMark = {
       subject,
-      examTitle,
+      examTitle: normalizedExamTitle,
       score: Number(normalizedScore.toFixed(2)),
       rawScore,
       maxMarks,

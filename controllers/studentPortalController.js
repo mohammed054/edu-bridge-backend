@@ -3,6 +3,7 @@ const Feedback = require('../models/Feedback');
 const Homework = require('../models/Homework');
 const ScheduleEntry = require('../models/ScheduleEntry');
 const User = require('../models/User');
+const { buildStudentWeeklySnapshot } = require('../services/intelligenceService');
 const { sendServerError } = require('../utils/safeError');
 
 const SCHOOL_DAY_RANGE = [1, 2, 3, 4, 5];
@@ -60,7 +61,7 @@ const getStudentPortalData = async (req, res) => {
       });
     }
 
-    const [announcements, homeworkDocs, feedbackDocs, teachers, scheduleEntries] = await Promise.all([
+    const [announcements, homeworkDocs, feedbackDocs, teachers, scheduleEntries, weeklySnapshot] = await Promise.all([
       Announcement.find({ className }).sort({ createdAt: -1 }).lean(),
       Homework.find({ className }).sort({ createdAt: -1 }).lean(),
       Feedback.find(
@@ -84,6 +85,7 @@ const getStudentPortalData = async (req, res) => {
         { className, isActive: true, dayOfWeek: { $in: SCHOOL_DAY_RANGE } },
         { subject: 1 }
       ).lean(),
+      buildStudentWeeklySnapshot(student._id),
     ]);
 
     const subjectsSet = new Set();
@@ -194,6 +196,7 @@ const getStudentPortalData = async (req, res) => {
         className,
         avatarUrl: student.profilePicture || student.avatarUrl || '',
       },
+      weeklySnapshot,
       subjects,
       recentFeedback: feedbackDocs.slice(0, 8).map(mapFeedbackItem),
       announcements: announcements.map((item) => ({

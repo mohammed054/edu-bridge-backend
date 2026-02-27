@@ -5,6 +5,7 @@ const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
 const { FEEDBACK_CATEGORY_KEYS } = require('../constants/feedbackCatalog');
+const { buildStudentWeeklySnapshot } = require('../services/intelligenceService');
 const { sendServerError } = require('../utils/safeError');
 
 const canTeacherAccessStudent = (teacherUser, studentUser) => {
@@ -172,6 +173,10 @@ const getStudentProfile = async (req, res) => {
       }
     }
 
+    const weeklySnapshot = await buildStudentWeeklySnapshot(targetStudent._id, {
+      subject: subjectFilter,
+    });
+
     return res.json({
       student: {
         id: String(targetStudent._id),
@@ -185,6 +190,7 @@ const getStudentProfile = async (req, res) => {
       negativeReports: Number(targetStudent.negativeReports || 0),
       examMarks,
       homework,
+      weeklySnapshot,
       marksAnalysis: buildMarksAnalysisPlaceholder(examMarks),
       categorySummary: buildCategorySummary(feedbackReceived),
       feedbackReceived: feedbackReceived.map((item) => ({

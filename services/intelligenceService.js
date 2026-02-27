@@ -6,11 +6,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const asId = (value) => String(value || '');
 
-const toLower = (value) => String(value || '').trim().toLowerCase();
+const asTrimmed = (value) => String(value || '').trim();
+
+const toLower = (value) => asTrimmed(value).toLowerCase();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const round = (value, digits = 2) => Number(Number(value || 0).toFixed(digits));
+
+const safeDateValue = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
 
 const createAttendanceBucket = () => ({
   present: 0,
@@ -38,6 +45,45 @@ const createEngagementBucket = () => ({
   level: 'Medium',
 });
 
+const createEmptySignals = () => ({
+  studentId: '',
+  studentName: '',
+  className: '',
+  riskIndex: 'Low',
+  contributingFactors: ['No critical factor identified'],
+  ruleBasedNudges: ['Maintain current intervention and review next week.'],
+  attendance: createAttendanceBucket(),
+  incidents: createIncidentBucket(),
+  parentEngagement: createEngagementBucket(),
+  pendingHomeworkCount: 0,
+  academicDirection: 'Stable',
+  grades: {
+    latestPercentage: null,
+    previousPercentage: null,
+    deltaPercentage: null,
+    sampleCount: 0,
+  },
+  trendShifts: [],
+  attendancePattern: 'No attendance data yet.',
+  behaviorNote: 'No behavior incidents logged in the selected period.',
+  parentEngagementStatus: 'Medium',
+  riskStatus: 'Low',
+  advisoryNote: 'Risk indicators are advisory only and require teacher review.',
+  weeklySummary:
+    'Student: advisory low risk. Human review is required before any intervention decision.',
+  weeklySnapshot: {
+    studentId: '',
+    studentName: '',
+    className: '',
+    academicDirection: 'Stable',
+    attendancePattern: 'No attendance data yet.',
+    behaviorNote: 'No behavior incidents logged in the selected period.',
+    parentEngagementStatus: 'Medium',
+    riskStatus: 'Low',
+    advisoryNote: 'Risk indicators are advisory only and require teacher review.',
+  },
+});
+
 const levelFromEngagementScore = (score) => {
   if (score >= 2) {
     return 'High';
@@ -60,6 +106,22 @@ const levelFromRiskScore = (score) => {
   }
 
   return 'Low';
+};
+
+const scoreFromExamMark = (mark) => {
+  const rawScore = mark?.rawScore === null || mark?.rawScore === undefined
+    ? Number(mark?.score)
+    : Number(mark.rawScore);
+
+  const maxMarks = Number(mark?.maxMarks || 100) || 100;
+  if (Number.isNaN(rawScore) || Number.isNaN(maxMarks) || maxMarks <= 0) {
+    if (Number.isNaN(Number(mark?.score))) {
+      return null;
+    }
+    return clamp(Number(mark.score || 0), 0, 100);
+  }
+
+  return round(clamp((rawScore / maxMarks) * 100, 0, 100), 2);
 };
 
 const buildAttendanceByStudent = (records = []) => {
@@ -323,34 +385,201 @@ const buildRiskProfile = ({ attendance, incidents, engagement, pendingHomeworkCo
   };
 };
 
-const buildStudentIntelligenceProfiles = ({ students, attendanceByStudent, incidentsByStudent, engagementByStudent }) => {
+const buildAcademicTrend = (examMarks = [], subjectFilter = '') => {
+  const filtered = (examMarks || [])
+    .filter((mark) => {
+      if (!subjectFilter) {
+        return true;
+      }
+      return toLower(mark.subject) === toLower(subjectFilter);
+    })
+    .map((mark) => ({
+      ...mark,
+      percentage: scoreFromExamMark(mark),
+      updatedAtValue: safeDateValue(mark.updatedAt),
+    }))
+    .filter((mark) => mark.percentage !== null)
+    .sort((left, right) => right.updatedAtValue - left.updatedAtValue);
+
+  const latest = filtered[0] || null;
+  const previous = filtered[1] || null;
+
+  if (!latest || !previous) {
+    return {
+      direction: 'Stable',
+      latestPercentage: latest ? round(latest.percentage) : null,
+      previousPercentage: previous ? round(previous.percentage) : null,
+      deltaPercentage: null,
+      sampleCount: filtered.length,
+      trendShifts: filtered.length ? ['Limited grade history.'] : ['No grade data available.'],
+    };
+  }
+
+  const delta = round(latest.percentage - previous.percentage);
+  const direction = delta >= 5 ? 'Improving' : delta <= -5 ? 'Declining' : 'Stable';
+
+  const trendShifts = [];
+  if (direction === 'Improving') {
+    trendShifts.push(`Latest exam improved by ${Math.abs(delta)} points.`);
+  } else if (direction === 'Declining') {
+    trendShifts.push(`Latest exam dropped by ${Math.abs(delta)} points.`);
+  } else {
+    trendShifts.push('Recent exam trend is stable.');
+  }
+
+  return {
+    direction,
+    latestPercentage: round(latest.percentage),
+    previousPercentage: round(previous.percentage),
+    deltaPercentage: delta,
+    sampleCount: filtered.length,
+    trendShifts,
+  };
+};
+
+const attendancePatternFromBucket = (attendance = createAttendanceBucket()) => {
+  if (!attendance.total) {
+    return 'No attendance data yet.';
+  }
+
+  if ((attendance.absent || 0) >= 2 || (attendance.late || 0) >= 3) {
+    return 'Irregular attendance trend this week.';
+  }
+
+  if ((attendance.attendancePercentage || 0) >= 95) {
+    return 'Consistent attendance pattern.';
+  }
+
+  if ((attendance.attendancePercentage || 0) >= 85) {
+    return 'Mostly stable attendance with minor gaps.';
+  }
+
+  return 'Attendance gaps are affecting weekly continuity.';
+};
+
+const behaviorNoteFromBucket = (incidents = createIncidentBucket()) => {
+  if ((incidents.high || 0) > 0) {
+    return 'High-severity behavior incident logged recently.';
+  }
+
+  if ((incidents.medium || 0) >= 2) {
+    return 'Repeated medium-severity behavior incidents observed.';
+  }
+
+  if ((incidents.low || 0) >= 2) {
+    return 'Low-severity behavior pattern needs follow-up.';
+  }
+
+  return 'No behavior incidents logged in the selected period.';
+};
+
+const advisoryNoteFromSignals = ({ riskIndex, direction, attendancePattern }) => {
+  if (riskIndex === 'High') {
+    return `Advisory: ${direction} academic direction with elevated support need. Teacher review required.`;
+  }
+
+  if (riskIndex === 'Medium') {
+    return `Advisory: ${direction} direction with monitored risk. ${attendancePattern}`;
+  }
+
+  return 'Advisory: low current risk. Continue regular monitoring.';
+};
+
+const buildWeeklySnapshot = (signals) => ({
+  studentId: signals.studentId,
+  studentName: signals.studentName,
+  className: signals.className,
+  academicDirection: signals.academicDirection,
+  attendancePattern: signals.attendancePattern,
+  behaviorNote: signals.behaviorNote,
+  parentEngagementStatus: signals.parentEngagementStatus,
+  riskStatus: signals.riskStatus,
+  advisoryNote: signals.advisoryNote,
+});
+
+const buildStudentSignals = ({
+  student,
+  attendance,
+  incidents,
+  engagement,
+  subjectFilter = '',
+}) => {
+  const base = createEmptySignals();
+  if (!student) {
+    return base;
+  }
+
+  const pendingHomeworkCount = (student.homework || []).filter((item) => item.status === 'pending').length;
+
+  const risk = buildRiskProfile({
+    attendance,
+    incidents,
+    engagement,
+    pendingHomeworkCount,
+  });
+
+  const academic = buildAcademicTrend(student.examMarks || [], subjectFilter);
+  const attendancePattern = attendancePatternFromBucket(attendance);
+  const behaviorNote = behaviorNoteFromBucket(incidents);
+  const parentEngagementStatus = engagement.level || 'Medium';
+  const riskStatus = risk.riskIndex;
+  const advisoryNote = advisoryNoteFromSignals({
+    riskIndex: riskStatus,
+    direction: academic.direction,
+    attendancePattern,
+  });
+
+  const signals = {
+    studentId: asId(student._id),
+    studentName: student.name || '',
+    className: (student.classes || [])[0] || '',
+    riskIndex: riskStatus,
+    contributingFactors: risk.contributingFactors,
+    ruleBasedNudges: risk.nudges,
+    attendance,
+    incidents,
+    parentEngagement: engagement,
+    pendingHomeworkCount,
+    academicDirection: academic.direction,
+    grades: {
+      latestPercentage: academic.latestPercentage,
+      previousPercentage: academic.previousPercentage,
+      deltaPercentage: academic.deltaPercentage,
+      sampleCount: academic.sampleCount,
+    },
+    trendShifts: academic.trendShifts,
+    attendancePattern,
+    behaviorNote,
+    parentEngagementStatus,
+    riskStatus,
+    advisoryNote,
+    weeklySummary: `${student.name || 'Student'}: ${riskStatus} risk, ${academic.direction} academics, ${attendancePattern}`,
+  };
+
+  return {
+    ...signals,
+    weeklySnapshot: buildWeeklySnapshot(signals),
+  };
+};
+
+const buildStudentIntelligenceProfiles = ({
+  students,
+  attendanceByStudent,
+  incidentsByStudent,
+  engagementByStudent,
+}) => {
   const profiles = students.map((student) => {
     const studentId = asId(student._id);
     const attendance = attendanceByStudent[studentId] || createAttendanceBucket();
     const incidents = incidentsByStudent[studentId] || createIncidentBucket();
     const engagement = engagementByStudent[studentId] || createEngagementBucket();
-    const pendingHomeworkCount = (student.homework || []).filter((item) => item.status === 'pending').length;
 
-    const risk = buildRiskProfile({
+    return buildStudentSignals({
+      student,
       attendance,
       incidents,
       engagement,
-      pendingHomeworkCount,
     });
-
-    return {
-      studentId,
-      studentName: student.name || '',
-      className: (student.classes || [])[0] || '',
-      riskIndex: risk.riskIndex,
-      contributingFactors: risk.contributingFactors,
-      ruleBasedNudges: risk.nudges,
-      attendance,
-      incidents,
-      parentEngagement: engagement,
-      pendingHomeworkCount,
-      weeklySummary: `${student.name || 'Student'}: ${risk.riskIndex} risk (${risk.contributingFactors.join(', ')}).`,
-    };
   });
 
   const sortWeight = { High: 0, Medium: 1, Low: 2 };
@@ -360,7 +589,12 @@ const buildStudentIntelligenceProfiles = ({ students, attendanceByStudent, incid
     if (weightDiff !== 0) {
       return weightDiff;
     }
-    return (right.incidents.total || 0) - (left.incidents.total || 0);
+
+    if (right.incidents.total !== left.incidents.total) {
+      return (right.incidents.total || 0) - (left.incidents.total || 0);
+    }
+
+    return (right.attendance.absent || 0) - (left.attendance.absent || 0);
   });
 };
 
@@ -412,41 +646,266 @@ const buildCommonOverview = ({ profiles, incidentsLast30Days }) => {
   };
 };
 
+const summarizeExamGroupsByClass = (students = [], classScope = null) => {
+  const grouped = {};
+
+  students.forEach((student) => {
+    const className = (student.classes || [])[0] || '';
+    if (!className) {
+      return;
+    }
+
+    if (classScope && !classScope.has(className)) {
+      return;
+    }
+
+    (student.examMarks || []).forEach((mark) => {
+      const subject = asTrimmed(mark.subject) || 'General';
+      const examTitle = asTrimmed(mark.examTitle) || 'Assessment';
+      const percentage = scoreFromExamMark(mark);
+      if (percentage === null) {
+        return;
+      }
+
+      const key = `${className}::${subject}::${examTitle}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          className,
+          subject,
+          examTitle,
+          samples: [],
+          lastUpdatedAtValue: 0,
+        };
+      }
+
+      grouped[key].samples.push({
+        studentId: asId(student._id),
+        studentName: student.name || '',
+        percentage,
+      });
+      grouped[key].lastUpdatedAtValue = Math.max(
+        grouped[key].lastUpdatedAtValue,
+        safeDateValue(mark.updatedAt)
+      );
+    });
+  });
+
+  const byClassAndSubject = {};
+
+  Object.values(grouped).forEach((entry) => {
+    const key = `${entry.className}::${entry.subject}`;
+    if (!byClassAndSubject[key]) {
+      byClassAndSubject[key] = {
+        className: entry.className,
+        subject: entry.subject,
+        exams: [],
+      };
+    }
+
+    const scores = entry.samples.map((sample) => sample.percentage);
+    const average = scores.length
+      ? scores.reduce((sum, value) => sum + value, 0) / scores.length
+      : 0;
+    const variance = scores.length
+      ? scores.reduce((sum, value) => sum + (value - average) ** 2, 0) / scores.length
+      : 0;
+
+    byClassAndSubject[key].exams.push({
+      examTitle: entry.examTitle,
+      count: scores.length,
+      average: round(average),
+      stdDev: round(Math.sqrt(variance)),
+      samples: entry.samples,
+      lastUpdatedAtValue: entry.lastUpdatedAtValue,
+    });
+  });
+
+  Object.values(byClassAndSubject).forEach((entry) => {
+    entry.exams.sort((left, right) => left.lastUpdatedAtValue - right.lastUpdatedAtValue);
+  });
+
+  return Object.values(byClassAndSubject);
+};
+
+const buildRapidDeclineSignals = (students = [], classScope = null) => {
+  const events = [];
+
+  students.forEach((student) => {
+    const className = (student.classes || [])[0] || '';
+    if (!className) {
+      return;
+    }
+
+    if (classScope && !classScope.has(className)) {
+      return;
+    }
+
+    const bySubject = {};
+    (student.examMarks || []).forEach((mark) => {
+      const subject = asTrimmed(mark.subject) || 'General';
+      if (!bySubject[subject]) {
+        bySubject[subject] = [];
+      }
+      const percentage = scoreFromExamMark(mark);
+      if (percentage === null) {
+        return;
+      }
+
+      bySubject[subject].push({
+        examTitle: asTrimmed(mark.examTitle) || 'Assessment',
+        percentage,
+        updatedAtValue: safeDateValue(mark.updatedAt),
+      });
+    });
+
+    Object.entries(bySubject).forEach(([subject, marks]) => {
+      if (marks.length < 2) {
+        return;
+      }
+
+      const sorted = [...marks].sort((left, right) => right.updatedAtValue - left.updatedAtValue);
+      const latest = sorted[0];
+      const previous = sorted[1];
+      const delta = round(latest.percentage - previous.percentage);
+
+      if (delta <= -20) {
+        events.push({
+          className,
+          subject,
+          studentName: student.name || '',
+          examTitle: latest.examTitle,
+          previousExamTitle: previous.examTitle,
+          drop: Math.abs(delta),
+        });
+      }
+    });
+  });
+
+  return events;
+};
+
+const buildClassAnalysisSuggestions = (students = [], classScope = null) => {
+  const suggestions = [];
+
+  const classExamGroups = summarizeExamGroupsByClass(students, classScope);
+
+  classExamGroups.forEach((group) => {
+    const exams = group.exams || [];
+
+    for (let index = 1; index < exams.length; index += 1) {
+      const previous = exams[index - 1];
+      const current = exams[index];
+      if (previous.count < 3 || current.count < 3 || previous.average <= 0) {
+        continue;
+      }
+
+      const drop = previous.average - current.average;
+      const dropPercentage = (drop / previous.average) * 100;
+
+      if (dropPercentage >= 15) {
+        suggestions.push({
+          type: 'exam_anomaly',
+          className: group.className,
+          subject: group.subject,
+          message: `${group.subject} ${current.examTitle} shows a ${round(
+            dropPercentage,
+            1
+          )}% average drop compared to ${previous.examTitle}.`,
+          suggestion:
+            'Review item difficulty and coverage alignment, then reteach the highest-missed standards before the next assessment.',
+        });
+      }
+    }
+
+    const latestExam = exams[exams.length - 1];
+    if (latestExam && latestExam.count >= 5) {
+      const threshold = Math.max(10, latestExam.stdDev * 1.5);
+      const highCutoff = latestExam.average + threshold;
+      const lowCutoff = latestExam.average - threshold;
+
+      latestExam.samples
+        .filter((sample) => sample.percentage >= highCutoff || sample.percentage <= lowCutoff)
+        .slice(0, 3)
+        .forEach((sample) => {
+          const direction = sample.percentage >= highCutoff ? 'above' : 'below';
+          suggestions.push({
+            type: 'outlier_performance',
+            className: group.className,
+            subject: group.subject,
+            message: `${sample.studentName} is an outlier in ${group.subject} ${latestExam.examTitle} (${round(
+              sample.percentage,
+              1
+            )}% ${direction} class trend).`,
+            suggestion:
+              direction === 'below'
+                ? 'Consider a targeted support plan and check conceptual gaps in the latest unit.'
+                : 'Consider enrichment tasks to sustain advanced progress.',
+          });
+        });
+    }
+  });
+
+  buildRapidDeclineSignals(students, classScope).slice(0, 8).forEach((event) => {
+    suggestions.push({
+      type: 'rapid_decline',
+      className: event.className,
+      subject: event.subject,
+      message: `${event.studentName} dropped ${round(event.drop, 1)} points in ${event.subject} from ${event.previousExamTitle} to ${event.examTitle}.`,
+      suggestion:
+        'Schedule a short diagnostic review and coordinate follow-up support in the next instructional cycle.',
+    });
+  });
+
+  const severity = {
+    exam_anomaly: 0,
+    rapid_decline: 1,
+    outlier_performance: 2,
+  };
+
+  return suggestions
+    .sort((left, right) => {
+      const severityDiff = (severity[left.type] || 9) - (severity[right.type] || 9);
+      if (severityDiff !== 0) {
+        return severityDiff;
+      }
+      return String(left.className || '').localeCompare(String(right.className || ''));
+    })
+    .slice(0, 20);
+};
+
+const buildEmptyDashboardPayload = () => ({
+  generatedAt: new Date().toISOString(),
+  pendingResponses: 0,
+  flaggedParents: 0,
+  repeatedIncidents: 0,
+  riskIndex: { Low: 0, Medium: 0, High: 0 },
+  parentEngagementScores: [],
+  studentsAtRisk: [],
+  weeklySummary: [],
+  weeklySnapshots: [],
+  classAnalysis: [],
+});
+
 const buildTeacherDashboardInsights = async (teacherId) => {
-  const teacher = await User.findOne({ _id: teacherId, role: 'teacher' }, { classes: 1 }).lean();
+  const teacher = await User.findOne(
+    { _id: teacherId, role: 'teacher' },
+    { classes: 1, subject: 1, subjects: 1 }
+  ).lean();
   if (!teacher) {
-    return {
-      generatedAt: new Date().toISOString(),
-      pendingResponses: 0,
-      flaggedParents: 0,
-      repeatedIncidents: 0,
-      riskIndex: { Low: 0, Medium: 0, High: 0 },
-      parentEngagementScores: [],
-      studentsAtRisk: [],
-      weeklySummary: [],
-    };
+    return buildEmptyDashboardPayload();
   }
 
   const classNames = teacher.classes || [];
   if (!classNames.length) {
-    return {
-      generatedAt: new Date().toISOString(),
-      pendingResponses: 0,
-      flaggedParents: 0,
-      repeatedIncidents: 0,
-      riskIndex: { Low: 0, Medium: 0, High: 0 },
-      parentEngagementScores: [],
-      studentsAtRisk: [],
-      weeklySummary: [],
-    };
+    return buildEmptyDashboardPayload();
   }
 
   const sinceDate = new Date(Date.now() - 30 * DAY_MS);
 
-  const [students, attendanceRecords, incidents] = await Promise.all([
+  const [studentsRaw, attendanceRecords, incidents] = await Promise.all([
     User.find(
       { role: 'student', classes: { $in: classNames } },
-      { name: 1, classes: 1, homework: 1 }
+      { name: 1, classes: 1, homework: 1, examMarks: 1 }
     ).lean(),
     AttendanceRecord.find(
       { className: { $in: classNames }, attendanceDate: { $gte: sinceDate } },
@@ -461,6 +920,14 @@ const buildTeacherDashboardInsights = async (teacherId) => {
   const attendanceByStudent = buildAttendanceByStudent(attendanceRecords);
   const incidentsByStudent = buildIncidentsByStudent(incidents);
   const engagementByStudent = buildParentEngagementByStudent(incidents);
+
+  const subjectScope = new Set((teacher.subjects || [teacher.subject]).filter(Boolean).map(toLower));
+  const students = studentsRaw.map((student) => ({
+    ...student,
+    examMarks: subjectScope.size
+      ? (student.examMarks || []).filter((mark) => subjectScope.has(toLower(mark.subject)))
+      : student.examMarks || [],
+  }));
 
   const profiles = buildStudentIntelligenceProfiles({
     students,
@@ -481,6 +948,8 @@ const buildTeacherDashboardInsights = async (teacherId) => {
       ruleBasedNudges: item.ruleBasedNudges,
     }));
 
+  const weeklySnapshots = profiles.map((item) => item.weeklySnapshot);
+
   return {
     generatedAt: new Date().toISOString(),
     pendingResponses: common.pendingResponses,
@@ -494,10 +963,11 @@ const buildTeacherDashboardInsights = async (teacherId) => {
       level: item.parentEngagement.level,
     })),
     studentsAtRisk: riskStudents,
-    weeklySummary: riskStudents.slice(0, 6).map((item) => {
-      const reason = item.contributingFactors[0] || 'No critical factor identified';
-      return `${item.studentName}: ${item.riskLevel} risk (${reason}).`;
-    }),
+    weeklySnapshots,
+    classAnalysis: buildClassAnalysisSuggestions(students, new Set(classNames)),
+    weeklySummary: weeklySnapshots.slice(0, 6).map(
+      (item) => `${item.studentName}: ${item.riskStatus} risk, ${item.academicDirection}, ${item.attendancePattern}`
+    ),
   };
 };
 
@@ -505,7 +975,7 @@ const buildAdminIntelligenceOverview = async () => {
   const sinceDate = new Date(Date.now() - 30 * DAY_MS);
 
   const [students, attendanceRecords, incidents] = await Promise.all([
-    User.find({ role: 'student' }, { name: 1, classes: 1, homework: 1 }).lean(),
+    User.find({ role: 'student' }, { name: 1, classes: 1, homework: 1, examMarks: 1 }).lean(),
     AttendanceRecord.find({ attendanceDate: { $gte: sinceDate } }, { entries: 1 }).lean(),
     Incident.find(
       { createdAt: { $gte: sinceDate } },
@@ -536,18 +1006,74 @@ const buildAdminIntelligenceOverview = async () => {
       ruleBasedNudges: item.ruleBasedNudges,
     }));
 
+  const weeklySnapshots = profiles.map((item) => item.weeklySnapshot);
+
   return {
     generatedAt: new Date().toISOString(),
     ...common,
     studentsAtRisk: riskStudents,
-    weeklySummary: riskStudents.slice(0, 10).map((item) => {
-      const reason = item.contributingFactors[0] || 'No critical factor identified';
-      return `${item.studentName}: ${item.riskLevel} risk (${reason}).`;
-    }),
+    weeklySnapshots,
+    classAnalysis: buildClassAnalysisSuggestions(students, null),
+    weeklySummary: weeklySnapshots.slice(0, 10).map(
+      (item) => `${item.studentName}: ${item.riskStatus} risk, ${item.academicDirection}, ${item.attendancePattern}`
+    ),
   };
+};
+
+const buildStudentAiSignals = async (studentId, { subject = '' } = {}) => {
+  const student = await User.findOne(
+    { _id: studentId, role: 'student' },
+    { name: 1, classes: 1, homework: 1, examMarks: 1 }
+  ).lean();
+
+  if (!student) {
+    return createEmptySignals();
+  }
+
+  const className = (student.classes || [])[0] || '';
+  const sinceDate = new Date(Date.now() - 30 * DAY_MS);
+
+  const [attendanceRecords, incidents] = await Promise.all([
+    className
+      ? AttendanceRecord.find(
+          {
+            className,
+            attendanceDate: { $gte: sinceDate },
+          },
+          { entries: 1 }
+        ).lean()
+      : [],
+    Incident.find(
+      {
+        studentId,
+        createdAt: { $gte: sinceDate },
+      },
+      { studentId: 1, parentNotification: 1, severity: 1, createdAt: 1 }
+    ).lean(),
+  ]);
+
+  const attendanceByStudent = buildAttendanceByStudent(attendanceRecords);
+  const incidentsByStudent = buildIncidentsByStudent(incidents);
+  const engagementByStudent = buildParentEngagementByStudent(incidents);
+
+  return buildStudentSignals({
+    student,
+    attendance: attendanceByStudent[asId(student._id)] || createAttendanceBucket(),
+    incidents: incidentsByStudent[asId(student._id)] || createIncidentBucket(),
+    engagement: engagementByStudent[asId(student._id)] || createEngagementBucket(),
+    subjectFilter: subject,
+  });
+};
+
+const buildStudentWeeklySnapshot = async (studentId, { subject = '' } = {}) => {
+  const signals = await buildStudentAiSignals(studentId, { subject });
+  return signals.weeklySnapshot || createEmptySignals().weeklySnapshot;
 };
 
 module.exports = {
   buildAdminIntelligenceOverview,
   buildTeacherDashboardInsights,
+  buildStudentWeeklySnapshot,
+  buildStudentAiSignals,
+  buildClassAnalysisSuggestions,
 };

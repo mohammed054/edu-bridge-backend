@@ -65,7 +65,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(securityHeaders);
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use(sanitizeRequest);
 
 app.get('/api/health', (_req, res) => {

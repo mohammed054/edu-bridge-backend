@@ -27,6 +27,12 @@ const {
 } = require('../controllers/incidentController');
 const { getTeacherWeeklySchedule } = require('../controllers/scheduleController');
 const { getTeacherDashboardInsights } = require('../controllers/intelligenceController');
+const {
+  previewGradeSheetImport,
+  confirmGradeSheetImport,
+  generateStudentFeedbackDraft,
+  generateStudentTermComment,
+} = require('../controllers/teacherAiController');
 
 router.use(verifyToken, teacherOnly);
 
@@ -34,6 +40,10 @@ router.get('/students', getTeacherExams);
 router.get('/exams', getTeacherExams);
 router.patch('/exams', upsertExamMark);
 router.delete('/exams', deleteExamMark);
+router.post('/grades/import/preview', messageRateLimiter, previewGradeSheetImport);
+router.post('/grades/import/confirm', messageRateLimiter, confirmGradeSheetImport);
+router.post('/students/:studentId/feedback-draft', messageRateLimiter, generateStudentFeedbackDraft);
+router.post('/students/:studentId/term-comment', messageRateLimiter, generateStudentTermComment);
 
 router.get('/homework', listTeacherHomework);
 router.post('/homework', messageRateLimiter, createHomework);
