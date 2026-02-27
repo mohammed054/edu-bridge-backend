@@ -3,6 +3,7 @@ const Feedback = require('../models/Feedback');
 const Homework = require('../models/Homework');
 const ScheduleEntry = require('../models/ScheduleEntry');
 const User = require('../models/User');
+const { sendServerError } = require('../utils/safeError');
 
 const SCHOOL_DAY_RANGE = [1, 2, 3, 4, 5];
 
@@ -204,7 +205,7 @@ const getStudentPortalData = async (req, res) => {
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load student portal data.' });
+    return sendServerError(res, error, 'Failed to load student portal data.');
   }
 };
 

@@ -1,6 +1,7 @@
 const Announcement = require('../models/Announcement');
 const Homework = require('../models/Homework');
 const User = require('../models/User');
+const { sendServerError } = require('../utils/safeError');
 
 const normalizeSubject = (value) => String(value || '').trim();
 
@@ -174,7 +175,7 @@ const getTeacherExams = async (req, res) => {
       announcements: announcementDocs.map(mapAnnouncement),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل بيانات المعلم.' });
+    return sendServerError(res, error, 'تعذر تحميل بيانات المعلم.');
   }
 };
 
@@ -242,7 +243,7 @@ const upsertExamMark = async (req, res) => {
       student: mapStudentForExamPanel(student.toObject()),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حفظ الدرجة.' });
+    return sendServerError(res, error, 'تعذر حفظ الدرجة.');
   }
 };
 
@@ -285,7 +286,7 @@ const deleteExamMark = async (req, res) => {
       student: mapStudentForExamPanel(student.toObject()),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف الدرجة.' });
+    return sendServerError(res, error, 'تعذر حذف الدرجة.');
   }
 };
 
@@ -316,7 +317,7 @@ const listTeacherHomework = async (req, res) => {
     const items = await Homework.find(query).sort({ createdAt: -1 }).lean();
     return res.json({ homework: items.map(mapHomework) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل الواجبات.' });
+    return sendServerError(res, error, 'تعذر تحميل الواجبات.');
   }
 };
 
@@ -392,7 +393,7 @@ const createHomework = async (req, res) => {
 
     return res.status(201).json({ homework: mapHomework(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إنشاء الواجب.' });
+    return sendServerError(res, error, 'تعذر إنشاء الواجب.');
   }
 };
 
@@ -472,7 +473,7 @@ const updateHomework = async (req, res) => {
 
     return res.json({ homework: mapHomework(homework.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحديث الواجب.' });
+    return sendServerError(res, error, 'تعذر تحديث الواجب.');
   }
 };
 
@@ -554,7 +555,7 @@ const updateHomeworkAssignment = async (req, res) => {
 
     return res.json({ homework: mapHomework(homework.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحديث الواجب.' });
+    return sendServerError(res, error, 'تعذر تحديث الواجب.');
   }
 };
 
@@ -580,7 +581,7 @@ const deleteHomework = async (req, res) => {
 
     return res.json({ message: 'تم حذف الواجب.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف الواجب.' });
+    return sendServerError(res, error, 'تعذر حذف الواجب.');
   }
 };
 
@@ -611,7 +612,7 @@ const listTeacherAnnouncements = async (req, res) => {
     const docs = await Announcement.find(query).sort({ createdAt: -1 }).lean();
     return res.json({ announcements: docs.map(mapAnnouncement) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحميل الإعلانات.' });
+    return sendServerError(res, error, 'تعذر تحميل الإعلانات.');
   }
 };
 
@@ -647,7 +648,7 @@ const createTeacherAnnouncement = async (req, res) => {
 
     return res.status(201).json({ announcement: mapAnnouncement(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر إنشاء الإعلان.' });
+    return sendServerError(res, error, 'تعذر إنشاء الإعلان.');
   }
 };
 
@@ -682,7 +683,7 @@ const updateTeacherAnnouncement = async (req, res) => {
     await announcement.save();
     return res.json({ announcement: mapAnnouncement(announcement.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تحديث الإعلان.' });
+    return sendServerError(res, error, 'تعذر تحديث الإعلان.');
   }
 };
 
@@ -699,7 +700,7 @@ const deleteTeacherAnnouncement = async (req, res) => {
 
     return res.json({ message: 'تم حذف الإعلان.' });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر حذف الإعلان.' });
+    return sendServerError(res, error, 'تعذر حذف الإعلان.');
   }
 };
 

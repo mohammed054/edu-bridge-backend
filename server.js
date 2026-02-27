@@ -5,6 +5,7 @@ const cors = require('cors');
 const { connectDB } = require('./db');
 const { sanitizeRequest } = require('./middleware/sanitizeMiddleware');
 const { securityHeaders } = require('./middleware/securityHeaders');
+const { apiRateLimiter } = require('./middleware/rateLimitMiddleware');
 
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -83,6 +84,7 @@ app.get('/api/assets/hikmah-logo', (_req, res) => {
 });
 
 app.use('/api/assets', express.static(path.join(__dirname, 'assets')));
+app.use('/api', apiRateLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
@@ -94,7 +96,7 @@ app.use('/api/surveys', surveyRoutes);
 
 app.use('/api/*', (req, res) => {
   res.status(404).json({
-    message: `Route not found: ${req.originalUrl}`,
+    message: 'Route not found.',
   });
 });
 
@@ -114,11 +116,13 @@ const PORT = process.env.PORT || 5000;
 connectDB()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`Server running on port ${PORT}`);
+      }
     });
   })
-  .catch((err) => {
-    console.error('Database connection failed:', err.message);
+  .catch(() => {
+    console.error('Database connection failed.');
     process.exit(1);
   });
 

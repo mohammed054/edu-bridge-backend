@@ -127,6 +127,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     profilePicture: {
       type: String,
       default: '',
@@ -198,6 +203,7 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     this.name || this.email || this.username || (this._id ? String(this._id) : 'user');
   const profilePicture = this.profilePicture || this.avatarUrl || buildAvatarUrl(avatarSeed);
   const subject = this.subject || (this.subjects || [])[0] || '';
+  const classes = this.classes || [];
 
   return {
     id: String(this._id),
@@ -208,14 +214,12 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     isActive: this.isActive !== false,
     profilePicture,
     avatarUrl: profilePicture,
-    classes: this.classes || [],
+    classes,
+    className: classes[0] || '',
     subject,
     subjects: subject ? [subject] : [],
     absentDays: this.absentDays || 0,
     negativeReports: this.negativeReports || 0,
-    examMarks: this.examMarks || [],
-    homework: this.homework || [],
-    feedbackHistory: this.feedbackHistory || [],
   };
 };
 

@@ -1,6 +1,8 @@
-﻿const ClassModel = require('../models/Class');
+const mongoose = require('mongoose');
+const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
 const User = require('../models/User');
+const { sendServerError } = require('../utils/safeError');
 const { HIKMAH_SUBJECTS } = require('../constants/subjects');
 const {
   FEEDBACK_CATEGORIES,
@@ -13,6 +15,7 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const asTrimmed = (value) => String(value || '').trim();
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(asTrimmed(value));
 
 const normalizeStringArray = (value) => {
   if (!Array.isArray(value)) {
@@ -43,6 +46,40 @@ const normalizeCategoryDetails = (value = {}) => {
 
 const flattenTagsFromDetails = (details) =>
   [...new Set(Object.values(details || {}).flatMap((list) => normalizeStringArray(list)))];
+
+const mapFeedbackResponse = (item) => ({
+  id: String(item._id),
+  _id: String(item._id),
+  feedbackType: item.feedbackType || '',
+  studentId: item.studentId ? String(item.studentId) : '',
+  studentName: item.studentName || '',
+  className: item.className || '',
+  teacherId: item.teacherId ? String(item.teacherId) : '',
+  teacherName: item.teacherName || '',
+  adminId: item.adminId ? String(item.adminId) : '',
+  adminName: item.adminName || '',
+  senderId: item.senderId ? String(item.senderId) : '',
+  senderRole: item.senderRole || item.senderType || '',
+  receiverId: item.receiverId ? String(item.receiverId) : '',
+  receiverRole: item.receiverRole || '',
+  subject: item.subject || '',
+  category: item.category || '',
+  subcategory: item.subcategory || '',
+  categories: item.categories || [],
+  notes: item.notes || '',
+  suggestion: item.suggestion || '',
+  tags: item.tags || [],
+  message: item.message || item.content || item.text || '',
+  content: item.content || item.message || item.text || '',
+  text: item.text || item.message || item.content || '',
+  replies: (item.replies || []).map((reply) => ({
+    senderType: reply.senderType || '',
+    text: reply.text || '',
+    createdAt: reply.createdAt || null,
+  })),
+  createdAt: item.createdAt,
+  updatedAt: item.updatedAt,
+});
 
 const hasSubjectAccess = (teacherSubjects, subject) =>
   (teacherSubjects || []).some(
@@ -174,6 +211,9 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   let student = null;
 
   if (studentId) {
+    if (!isValidObjectId(studentId)) {
+      throw new Error('معرف الطالب غير صالح.');
+    }
     student = await User.findOne({ _id: studentId, role: 'student' });
   } else if (studentName) {
     student = await User.findOne({
@@ -205,26 +245,37 @@ const resolveStudentAndClass = async ({ studentId, studentName, className }) => 
   return { student, targetClass };
 };
 
-const ensureSharedClass = (leftClasses = [], rightClasses = []) => {
-  const leftSet = new Set(leftClasses);
-  return rightClasses.some((className) => leftSet.has(className));
-};
-
 const getFeedbackOptions = async (req, res) => {
   try {
+    const allowedClasses =
+      req.user.role === 'admin' ? null : req.user.classes?.length ? req.user.classes : [];
     const classQuery =
-      req.user.role !== 'admin'
-        ? req.user.classes?.length
-          ? { name: { $in: req.user.classes } }
-          : { _id: null }
-        : {};
+      req.user.role === 'admin'
+        ? {}
+        : allowedClasses.length
+          ? { name: { $in: allowedClasses } }
+          : { _id: null };
+
+    const studentQuery =
+      req.user.role === 'student'
+        ? { _id: req.user.id, role: 'student' }
+        : req.user.role === 'teacher'
+          ? { role: 'student', classes: { $in: allowedClasses } }
+          : { role: 'student' };
+
+    const teacherQuery =
+      req.user.role === 'admin'
+        ? { role: 'teacher' }
+        : { role: 'teacher', classes: { $in: allowedClasses } };
 
     const [classes, students, teachers, admins] = await Promise.all([
       ClassModel.find(classQuery).sort({ createdAt: 1 }).lean(),
-      User.find(req.user.role === 'student' ? { _id: req.user.id, role: 'student' } : { role: 'student' })
+      User.find(studentQuery, { name: 1, email: 1, classes: 1, profilePicture: 1, avatarUrl: 1 })
         .sort({ name: 1 })
         .lean(),
-      User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
+      User.find(teacherQuery, { name: 1, email: 1, classes: 1, subject: 1, subjects: 1, profilePicture: 1, avatarUrl: 1 })
+        .sort({ name: 1 })
+        .lean(),
       User.find({ role: 'admin' }, { name: 1, username: 1, email: 1, profilePicture: 1, avatarUrl: 1 }).lean(),
     ]);
 
@@ -238,7 +289,6 @@ const getFeedbackOptions = async (req, res) => {
         .map((student) => ({
           id: String(student._id),
           name: student.name,
-          email: student.email,
           avatarUrl: student.profilePicture || student.avatarUrl || '',
         })),
       teachers: teachers
@@ -246,7 +296,6 @@ const getFeedbackOptions = async (req, res) => {
         .map((teacher) => ({
           id: String(teacher._id),
           name: teacher.name,
-          email: teacher.email,
           avatarUrl: teacher.profilePicture || teacher.avatarUrl || '',
           subjects: teacher.subject ? [teacher.subject] : teacher.subjects || [],
           subject: teacher.subject || teacher.subjects?.[0] || '',
@@ -264,14 +313,13 @@ const getFeedbackOptions = async (req, res) => {
       admins: admins.map((admin) => ({
         id: String(admin._id),
         name: admin.name || admin.username || '???????',
-        email: admin.email || '',
         avatarUrl: admin.profilePicture || admin.avatarUrl || '',
       })),
       categories: FEEDBACK_CATEGORIES,
       subjects: subjectsByRole[req.user.role] || HIKMAH_SUBJECTS,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ?????? ??????? ???????.' });
+    return sendServerError(res, error, '???? ????? ?????? ??????? ???????.');
   }
 };
 
@@ -385,10 +433,10 @@ const generateFeedback = async (req, res) => {
 
     return res.status(201).json({
       message,
-      feedback: created,
+      feedback: mapFeedbackResponse(created),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ??????? ???????.' });
+    return sendServerError(res, error, '???? ????? ??????? ???????.');
   }
 };
 
@@ -405,6 +453,9 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     if (!teacherId || !subject) {
       return res.status(400).json({ message: '?????? ??????? ???? ??????.' });
     }
+    if (!isValidObjectId(teacherId)) {
+      return res.status(400).json({ message: 'Teacher identifier is invalid.' });
+    }
     if (!categories.length) {
       return res.status(400).json({ message: '??? ?????? ??? ????? ??? ?????.' });
     }
@@ -420,17 +471,20 @@ const submitStudentToTeacherFeedback = async (req, res) => {
     if (!teacher) {
       return res.status(404).json({ message: '?????? ??? ?????.' });
     }
-    if (!ensureSharedClass(student.classes || [], teacher.classes || [])) {
+    const sharedClasses = (student.classes || []).filter((classItem) => (teacher.classes || []).includes(classItem));
+    if (!sharedClasses.length) {
       return res.status(403).json({ message: '????? ??????? ?????? ??? ???.' });
     }
     if (!hasSubjectAccess(teacher.subject ? [teacher.subject] : teacher.subjects || [], subject)) {
       return res.status(403).json({ message: '?????? ??? ?????? ???? ??????.' });
     }
 
-    const className =
-      asTrimmed(req.body?.className) ||
-      (student.classes || []).find((classItem) => (teacher.classes || []).includes(classItem)) ||
-      '';
+    const requestedClassName = asTrimmed(req.body?.className);
+    if (requestedClassName && !sharedClasses.includes(requestedClassName)) {
+      return res.status(403).json({ message: 'You are not allowed to send feedback for this class.' });
+    }
+
+    const className = requestedClassName || sharedClasses[0] || '';
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
 
     const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || '????? ?????';
@@ -463,9 +517,9 @@ const submitStudentToTeacherFeedback = async (req, res) => {
       timestamp: new Date(),
     });
 
-    return res.status(201).json({ feedback });
+    return res.status(201).json({ feedback: mapFeedbackResponse(feedback) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ??????? ??????? ??????.' });
+    return sendServerError(res, error, '???? ????? ??????? ??????? ??????.');
   }
 };
 
@@ -481,6 +535,9 @@ const submitStudentToAdminFeedback = async (req, res) => {
 
     if (!subject) {
       return res.status(400).json({ message: '?????? ??? ?????.' });
+    }
+    if (requestedAdminId && !isValidObjectId(requestedAdminId)) {
+      return res.status(400).json({ message: 'Admin identifier is invalid.' });
     }
     if (!categories.length) {
       return res.status(400).json({ message: '??? ?????? ??? ????? ??? ?????.' });
@@ -499,7 +556,13 @@ const submitStudentToAdminFeedback = async (req, res) => {
       return res.status(404).json({ message: '???? ??????? ??? ?????.' });
     }
 
-    const className = asTrimmed(req.body?.className) || (student.classes || [])[0] || '';
+    const requestedClassName = asTrimmed(req.body?.className);
+    const studentClassName = (student.classes || [])[0] || '';
+    if (requestedClassName && requestedClassName !== studentClassName) {
+      return res.status(403).json({ message: 'You are not allowed to send feedback for this class.' });
+    }
+
+    const className = requestedClassName || studentClassName;
     const classItem = className ? await ClassModel.findOne({ name: className }) : null;
 
     const firstCategoryLabel = FEEDBACK_CATEGORY_LABEL_BY_KEY[categories[0]] || '????? ?????';
@@ -532,9 +595,9 @@ const submitStudentToAdminFeedback = async (req, res) => {
       timestamp: new Date(),
     });
 
-    return res.status(201).json({ feedback });
+    return res.status(201).json({ feedback: mapFeedbackResponse(feedback) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ??????? ??????? ???????.' });
+    return sendServerError(res, error, '???? ????? ??????? ??????? ???????.');
   }
 };
 
@@ -546,13 +609,13 @@ const listFeedbacks = async (req, res) => {
     const searchText = asTrimmed(req.query.search);
     const categoryFilter = parseCategoryFilter(req.query.category);
 
-    if (asTrimmed(req.query.studentId)) {
+    if (asTrimmed(req.query.studentId) && isValidObjectId(req.query.studentId)) {
       query.studentId = asTrimmed(req.query.studentId);
     }
-    if (asTrimmed(req.query.teacherId)) {
+    if (asTrimmed(req.query.teacherId) && isValidObjectId(req.query.teacherId)) {
       query.teacherId = asTrimmed(req.query.teacherId);
     }
-    if (asTrimmed(req.query.adminId)) {
+    if (asTrimmed(req.query.adminId) && isValidObjectId(req.query.adminId)) {
       query.adminId = asTrimmed(req.query.adminId);
     }
     if (asTrimmed(req.query.className)) {
@@ -599,9 +662,9 @@ const listFeedbacks = async (req, res) => {
     const scopedQuery = applyRoleScope(query, req.user);
     const feedbacks = await Feedback.find(scopedQuery).sort({ createdAt: -1 }).limit(limit).lean();
 
-    return res.json({ feedbacks });
+    return res.json({ feedbacks: feedbacks.map(mapFeedbackResponse) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ??? ??????? ???????.' });
+    return sendServerError(res, error, '???? ????? ??? ??????? ???????.');
   }
 };
 
@@ -612,6 +675,9 @@ const addReply = async (req, res) => {
 
     if (!feedbackId || !text) {
       return res.status(400).json({ message: '??????? ??? ???? ???? ??????.' });
+    }
+    if (!isValidObjectId(feedbackId)) {
+      return res.status(400).json({ message: 'Feedback identifier is invalid.' });
     }
 
     const existing = await Feedback.findById(feedbackId).lean();
@@ -637,9 +703,9 @@ const addReply = async (req, res) => {
       { new: true }
     ).lean();
 
-    return res.json({ feedback });
+    return res.json({ feedback: mapFeedbackResponse(feedback) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ????.' });
+    return sendServerError(res, error, '???? ????? ????.');
   }
 };
 

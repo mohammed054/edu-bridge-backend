@@ -1,6 +1,7 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { verifyToken, studentOnly } = require('../middleware/authMiddleware');
+const { messageRateLimiter } = require('../middleware/rateLimitMiddleware');
 const { getStudentProfile } = require('../controllers/profileController');
 const { getStudentPortalData } = require('../controllers/studentPortalController');
 const { getStudentWeeklySchedule } = require('../controllers/scheduleController');
@@ -27,9 +28,7 @@ router.get('/feedback', (req, res, next) => {
   return listFeedbacks(req, res, next);
 });
 
-router.post('/feedback/teacher', submitStudentToTeacherFeedback);
-router.post('/feedback/admin', submitStudentToAdminFeedback);
+router.post('/feedback/teacher', messageRateLimiter, submitStudentToTeacherFeedback);
+router.post('/feedback/admin', messageRateLimiter, submitStudentToAdminFeedback);
 
 module.exports = router;
-
-

@@ -1,6 +1,7 @@
 const ClassModel = require('../models/Class');
 const ScheduleEntry = require('../models/ScheduleEntry');
 const User = require('../models/User');
+const { sendServerError } = require('../utils/safeError');
 
 const SCHOOL_DAY_RANGE = [1, 2, 3, 4, 5];
 
@@ -125,7 +126,7 @@ const getStudentWeeklySchedule = async (req, res) => {
       entries: entries.map((item) => mapScheduleEntry(item, classMetaByName)).sort(sortBySlot),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load student schedule.' });
+    return sendServerError(res, error, 'Failed to load student schedule.');
   }
 };
 
@@ -167,7 +168,7 @@ const getTeacherWeeklySchedule = async (req, res) => {
       entries: entries.map((item) => mapScheduleEntry(item, classMetaByName)).sort(sortBySlot),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load teacher schedule.' });
+    return sendServerError(res, error, 'Failed to load teacher schedule.');
   }
 };
 
@@ -224,7 +225,7 @@ const getAdminScheduleOverview = async (req, res) => {
       entries: entries.map((item) => mapScheduleEntry(item, classMetaByName)).sort(sortBySlot),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load schedule overview.' });
+    return sendServerError(res, error, 'Failed to load schedule overview.');
   }
 };
 

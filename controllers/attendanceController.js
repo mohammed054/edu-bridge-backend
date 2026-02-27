@@ -1,5 +1,8 @@
+const mongoose = require('mongoose');
 const AttendanceRecord = require('../models/AttendanceRecord');
 const User = require('../models/User');
+const { writeAuditLog } = require('../services/auditLogService');
+const { sendServerError } = require('../utils/safeError');
 
 const asTrimmed = (value) => String(value || '').trim();
 
@@ -17,6 +20,20 @@ const toDayStart = (value) => {
   date.setHours(0, 0, 0, 0);
   return date;
 };
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(asTrimmed(value));
+
+const writeAudit = (req, { action, entityType, entityId, metadata = {} }) =>
+  writeAuditLog({
+    actorId: req.user?.id,
+    actorRole: req.user?.role,
+    action,
+    entityType,
+    entityId,
+    metadata,
+    ipAddress: req.ip,
+    userAgent: req.headers?.['user-agent'] || '',
+  });
 
 const mapRecord = (record) => ({
   id: String(record._id),
@@ -84,6 +101,10 @@ const markAttendance = async (req, res) => {
       return res.status(400).json({ message: 'At least one valid attendance entry is required.' });
     }
 
+    if (normalizedEntries.some((item) => !isValidObjectId(item.studentId))) {
+      return res.status(400).json({ message: 'Attendance list contains invalid student identifiers.' });
+    }
+
     const students = await User.find(
       {
         _id: { $in: normalizedEntries.map((item) => item.studentId) },
@@ -99,7 +120,7 @@ const markAttendance = async (req, res) => {
     }, {});
 
     if (students.length !== normalizedEntries.length) {
-      return res.status(400).json({ message: 'Attendance list includes invalid or unauthorized students.' });
+      return res.status(403).json({ message: 'Attendance list includes unauthorized students.' });
     }
 
     const mappedEntries = normalizedEntries
@@ -110,6 +131,14 @@ const markAttendance = async (req, res) => {
         markedAt: new Date(),
       }))
       .sort((left, right) => String(left.studentName || '').localeCompare(String(right.studentName || '')));
+
+    const existing = await AttendanceRecord.findOne({
+      className,
+      subject,
+      teacherId: req.user.id,
+      attendanceDate,
+      slotStartTime,
+    }).lean();
 
     const record = await AttendanceRecord.findOneAndUpdate(
       {
@@ -138,9 +167,21 @@ const markAttendance = async (req, res) => {
       }
     ).lean();
 
+    await writeAudit(req, {
+      action: existing ? 'attendance.update' : 'attendance.create',
+      entityType: 'attendance_record',
+      entityId: String(record._id),
+      metadata: {
+        className: record.className,
+        subject: record.subject,
+        attendanceDate: record.attendanceDate,
+        entriesCount: (record.entries || []).length,
+      },
+    });
+
     return res.status(201).json({ attendance: mapRecord(record) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to mark attendance.' });
+    return sendServerError(res, error, 'Failed to mark attendance.');
   }
 };
 
@@ -212,7 +253,7 @@ const getTeacherAttendanceSummary = async (req, res) => {
 
     return res.json({ summary });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load attendance summary.' });
+    return sendServerError(res, error, 'Failed to load attendance summary.');
   }
 };
 
@@ -274,7 +315,7 @@ const getStudentAttendanceSummary = async (req, res) => {
       ...summary,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load attendance summary.' });
+    return sendServerError(res, error, 'Failed to load attendance summary.');
   }
 };
 

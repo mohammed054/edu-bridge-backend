@@ -1,6 +1,9 @@
-﻿const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { buildSignOptions } = require('../utils/jwtConfig');
+const { sendServerError } = require('../utils/safeError');
 const {
   normalizeIdentifier,
   normalizeEmail,
@@ -9,33 +12,36 @@ const {
   ADMIN_USERNAME,
 } = require('../utils/userValidation');
 
-const resolveJwtOptions = () => {
-  const raw = String(process.env.JWT_EXPIRES_IN || '').trim().toLowerCase();
-  if (!raw || ['0', 'false', 'none', 'off'].includes(raw)) {
-    return undefined;
-  }
-
-  return { expiresIn: process.env.JWT_EXPIRES_IN };
-};
-
 const signToken = (user) =>
   jwt.sign(
     {
-      sub: String(user._id),
       role: user.role,
+      ver: Number(user.tokenVersion || 0),
     },
     process.env.JWT_SECRET,
-    resolveJwtOptions()
+    {
+      ...buildSignOptions(String(user._id)),
+      jwtid: crypto.randomUUID(),
+    }
   );
 
-const buildAuthResponse = (user) => ({
-  token: signToken(user),
-  user: user.toSafeObject(),
-});
+const buildAuthResponse = (user) => {
+  const token = signToken(user);
+  const decoded = jwt.decode(token) || {};
+
+  return {
+    token,
+    expiresAt: decoded?.exp ? new Date(Number(decoded.exp) * 1000).toISOString() : null,
+    user: user.toSafeObject(),
+  };
+};
 
 const isStudentLoginTestMode = () => {
-  const raw = String(process.env.STUDENT_LOGIN_TEST_MODE || 'true').trim().toLowerCase();
-  return !['0', 'false', 'no', 'off'].includes(raw);
+  const raw = String(process.env.STUDENT_LOGIN_TEST_MODE || '')
+    .trim()
+    .toLowerCase();
+  const enabled = ['1', 'true', 'yes', 'on'].includes(raw);
+  return process.env.NODE_ENV !== 'production' && enabled;
 };
 
 const verifyPassword = async (plainPassword, user) => {
@@ -74,7 +80,7 @@ const loginStudent = async (req, res) => {
 
     return res.json(buildAuthResponse(user));
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول الطالب.' });
+    return sendServerError(res, error, 'تعذر تسجيل دخول الطالب.');
   }
 };
 
@@ -108,7 +114,7 @@ const loginTeacher = async (req, res) => {
 
     return res.json(buildAuthResponse(user));
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول المعلم.' });
+    return sendServerError(res, error, 'تعذر تسجيل دخول المعلم.');
   }
 };
 
@@ -142,7 +148,7 @@ const loginAdmin = async (req, res) => {
 
     return res.json(buildAuthResponse(user));
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'تعذر تسجيل دخول الإدارة.' });
+    return sendServerError(res, error, 'تعذر تسجيل دخول الإدارة.');
   }
 };
 
@@ -176,12 +182,32 @@ const login = async (req, res) => {
 };
 
 const getCurrentUser = async (req, res) => {
-  const user = await User.findById(req.user.id);
-  if (!user) {
-    return res.status(404).json({ message: 'المستخدم غير موجود.' });
-  }
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'المستخدم غير موجود.' });
+    }
 
-  return res.json({ user: user.toSafeObject() });
+    return res.json({ user: user.toSafeObject() });
+  } catch (error) {
+    return sendServerError(res, error, 'تعذر تحميل بيانات المستخدم.');
+  }
+};
+
+const logout = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'المستخدم غير موجود.' });
+    }
+
+    user.tokenVersion = Number(user.tokenVersion || 0) + 1;
+    await user.save();
+
+    return res.json({ success: true });
+  } catch (error) {
+    return sendServerError(res, error, 'تعذر تسجيل الخروج.');
+  }
 };
 
 module.exports = {
@@ -190,4 +216,5 @@ module.exports = {
   loginTeacher,
   loginAdmin,
   getCurrentUser,
+  logout,
 };

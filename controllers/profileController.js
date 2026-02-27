@@ -1,9 +1,11 @@
-﻿const Feedback = require('../models/Feedback');
+const mongoose = require('mongoose');
+const Feedback = require('../models/Feedback');
 const Homework = require('../models/Homework');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
 const { FEEDBACK_CATEGORY_KEYS } = require('../constants/feedbackCatalog');
+const { sendServerError } = require('../utils/safeError');
 
 const canTeacherAccessStudent = (teacherUser, studentUser) => {
   const teacherClasses = new Set(teacherUser?.classes || []);
@@ -14,6 +16,7 @@ const hasSubjectAccess = (teacherSubjects, subject) =>
   (teacherSubjects || []).some(
     (teacherSubject) => String(teacherSubject || '').toLowerCase() === String(subject || '').toLowerCase()
   );
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || '').trim());
 
 const buildMarksAnalysisPlaceholder = (examMarks) => ({
   implemented: false,
@@ -69,6 +72,9 @@ const getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
     const subjectFilter = String(req.query?.subject || '').trim();
+    if (!isValidObjectId(studentId)) {
+      return res.status(400).json({ message: 'Student identifier is invalid.' });
+    }
     const targetStudent = await User.findOne({ _id: studentId, role: 'student' }).lean();
 
     if (!targetStudent) {
@@ -192,8 +198,6 @@ const getStudentProfile = async (req, res) => {
         category: item.category || '',
         subcategory: item.subcategory || '',
         categories: item.categories || [],
-        categoryDetails: item.categoryDetails || {},
-        AIAnalysis: item.AIAnalysis || {},
         content: item.content || item.message || item.text || '',
         tags: item.tags || [],
         notes: item.notes || '',
@@ -206,7 +210,7 @@ const getStudentProfile = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || '???? ????? ????? ??????.' });
+    return sendServerError(res, error, '???? ????? ????? ??????.');
   }
 };
 

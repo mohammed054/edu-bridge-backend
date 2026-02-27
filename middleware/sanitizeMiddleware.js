@@ -1,10 +1,18 @@
-﻿const MAX_STRING_LENGTH = 5000;
+const MAX_STRING_LENGTH = 5000;
 const BLOCKED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
-const isPlainObject = (value) =>
-  Object.prototype.toString.call(value) === '[object Object]';
+const isPlainObject = (value) => Object.prototype.toString.call(value) === '[object Object]';
 
-const cleanString = (value) => String(value).trim().slice(0, MAX_STRING_LENGTH);
+const stripDangerousHtml = (value) =>
+  String(value || '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/?[^>]+(>|$)/g, ' ')
+    .replace(/javascript:/gi, '')
+    .replace(/\son\w+\s*=/gi, ' ')
+    .replace(/\s+/g, ' ');
+
+const cleanString = (value) => stripDangerousHtml(value).trim().slice(0, MAX_STRING_LENGTH);
 
 const sanitizeValue = (value) => {
   if (Array.isArray(value)) {
@@ -50,5 +58,3 @@ module.exports = {
   sanitizeValue,
   sanitizeRequest,
 };
-
-

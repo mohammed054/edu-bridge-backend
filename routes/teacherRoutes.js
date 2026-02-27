@@ -1,6 +1,7 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { verifyToken, teacherOnly } = require('../middleware/authMiddleware');
+const { incidentRateLimiter, messageRateLimiter } = require('../middleware/rateLimitMiddleware');
 const {
   getTeacherExams,
   upsertExamMark,
@@ -35,27 +36,25 @@ router.patch('/exams', upsertExamMark);
 router.delete('/exams', deleteExamMark);
 
 router.get('/homework', listTeacherHomework);
-router.post('/homework', createHomework);
+router.post('/homework', messageRateLimiter, createHomework);
 router.patch('/homework/:id', updateHomework);
 router.patch('/homework/:id/assignments', updateHomeworkAssignment);
 router.delete('/homework/:id', deleteHomework);
 
 router.get('/announcements', listTeacherAnnouncements);
-router.post('/announcements', createTeacherAnnouncement);
+router.post('/announcements', messageRateLimiter, createTeacherAnnouncement);
 router.patch('/announcements/:id', updateTeacherAnnouncement);
 router.delete('/announcements/:id', deleteTeacherAnnouncement);
 
 router.get('/schedule', getTeacherWeeklySchedule);
 
-router.post('/attendance', markAttendance);
+router.post('/attendance', incidentRateLimiter, markAttendance);
 router.get('/attendance/summary', getTeacherAttendanceSummary);
 
 router.get('/incidents', listTeacherIncidents);
-router.post('/incidents', logIncident);
-router.patch('/incidents/:id/parent-status', updateIncidentParentStatus);
+router.post('/incidents', incidentRateLimiter, logIncident);
+router.patch('/incidents/:id/parent-status', incidentRateLimiter, updateIncidentParentStatus);
 
 router.get('/dashboard-insights', getTeacherDashboardInsights);
 
 module.exports = router;
-
-

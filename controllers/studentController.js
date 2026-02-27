@@ -1,11 +1,12 @@
 const Student = require('../models/Student');
+const { sendServerError } = require('../utils/safeError');
 
 const getStudents = async (req, res) => {
   try {
     const students = await Student.find().populate('classId');
     res.json(students);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendServerError(res, error, 'Failed to load students.');
   }
 };
 
@@ -15,7 +16,7 @@ const createStudent = async (req, res) => {
     const newStudent = await student.save();
     res.status(201).json(newStudent);
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({ message: 'Invalid student payload.' });
   }
 };
 

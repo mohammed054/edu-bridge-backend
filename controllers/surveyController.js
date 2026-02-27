@@ -3,10 +3,12 @@ const mongoose = require('mongoose');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
 const User = require('../models/User');
+const { sendServerError } = require('../utils/safeError');
 
 const QUESTION_TYPES = new Set(['multiple_choice', 'rating', 'text']);
 
 const asTrimmed = (value) => String(value || '').trim();
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(asTrimmed(value));
 
 const normalizeQuestionType = (value) => {
   const raw = asTrimmed(value).toLowerCase();
@@ -172,7 +174,7 @@ const listAdminSurveys = async (_req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load surveys.' });
+    return sendServerError(res, error, 'Failed to load surveys.');
   }
 };
 
@@ -213,12 +215,16 @@ const createSurvey = async (req, res) => {
 
     return res.status(201).json({ survey: surveyPayload(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to create survey.' });
+    return sendServerError(res, error, 'Failed to create survey.');
   }
 };
 
 const updateSurvey = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Survey identifier is invalid.' });
+    }
+
     const existing = await Survey.findById(req.params.id);
     if (!existing) {
       return res.status(404).json({ message: 'Survey not found.' });
@@ -274,12 +280,16 @@ const updateSurvey = async (req, res) => {
 
     return res.json({ survey: surveyPayload(existing.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update survey.' });
+    return sendServerError(res, error, 'Failed to update survey.');
   }
 };
 
 const deleteSurvey = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Survey identifier is invalid.' });
+    }
+
     const survey = await Survey.findByIdAndDelete(req.params.id);
     if (!survey) {
       return res.status(404).json({ message: 'Survey not found.' });
@@ -288,12 +298,16 @@ const deleteSurvey = async (req, res) => {
     await SurveyResponse.deleteMany({ surveyId: survey._id });
     return res.json({ success: true, deletedSurveyId: String(survey._id) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to delete survey.' });
+    return sendServerError(res, error, 'Failed to delete survey.');
   }
 };
 
 const listSurveyResponsesForAdmin = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Survey identifier is invalid.' });
+    }
+
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey) {
       return res.status(404).json({ message: 'Survey not found.' });
@@ -323,7 +337,7 @@ const listSurveyResponsesForAdmin = async (req, res) => {
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to fetch survey responses.' });
+    return sendServerError(res, error, 'Failed to fetch survey responses.');
   }
 };
 const listAssignedSurveys = async (req, res) => {
@@ -360,12 +374,16 @@ const listAssignedSurveys = async (req, res) => {
       ),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load assigned surveys.' });
+    return sendServerError(res, error, 'Failed to load assigned surveys.');
   }
 };
 
 const submitSurveyResponse = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Survey identifier is invalid.' });
+    }
+
     const survey = await Survey.findById(req.params.id).lean();
     if (!survey || !survey.isActive) {
       return res.status(404).json({ message: 'Survey not found.' });
@@ -502,7 +520,7 @@ const submitSurveyResponse = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to submit survey response.' });
+    return sendServerError(res, error, 'Failed to submit survey response.');
   }
 };
 

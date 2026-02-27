@@ -1,5 +1,6 @@
-﻿const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { buildVerifyOptions } = require('../utils/jwtConfig');
 
 const ensureBearerToken = (authHeader = '') => {
   const [scheme, token] = String(authHeader).split(' ');
@@ -16,7 +17,11 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, buildVerifyOptions());
+    if (!decoded?.sub || !decoded?.exp) {
+      return res.status(401).json({ message: 'الرمز لا يحتوي على جلسة صالحة.' });
+    }
+
     const user = await User.findById(decoded.sub);
 
     if (!user) {
@@ -29,6 +34,10 @@ const verifyToken = async (req, res, next) => {
 
     if (decoded.role && decoded.role !== user.role) {
       return res.status(403).json({ message: 'عدم تطابق صلاحية الدور.' });
+    }
+
+    if (Number(decoded.ver || 0) !== Number(user.tokenVersion || 0)) {
+      return res.status(401).json({ message: 'تم إبطال هذه الجلسة. يرجى تسجيل الدخول مجددًا.' });
     }
 
     req.user = {

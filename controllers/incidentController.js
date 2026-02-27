@@ -1,12 +1,29 @@
+const mongoose = require('mongoose');
 const Incident = require('../models/Incident');
 const User = require('../models/User');
+const { writeAuditLog } = require('../services/auditLogService');
+const { sendServerError } = require('../utils/safeError');
 
 const asTrimmed = (value) => String(value || '').trim();
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(asTrimmed(value));
 
 const hasSubjectAccess = (teacherSubjects, subject) =>
   (teacherSubjects || []).some(
     (entry) => String(entry || '').toLowerCase() === String(subject || '').toLowerCase()
   );
+
+const writeAudit = (req, { action, entityType, entityId, metadata = {} }) =>
+  writeAuditLog({
+    actorId: req.user?.id,
+    actorRole: req.user?.role,
+    action,
+    entityType,
+    entityId,
+    metadata,
+    ipAddress: req.ip,
+    userAgent: req.headers?.['user-agent'] || '',
+  });
 
 const mapIncident = (incident) => ({
   id: String(incident._id),
@@ -42,6 +59,10 @@ const logIncident = async (req, res) => {
       return res.status(400).json({ message: 'Incident payload is incomplete or invalid.' });
     }
 
+    if (!isValidObjectId(studentId)) {
+      return res.status(400).json({ message: 'Student identifier is invalid.' });
+    }
+
     if (!req.user.classes?.includes(className)) {
       return res.status(403).json({ message: 'You are not allowed to log incidents for this class.' });
     }
@@ -60,7 +81,7 @@ const logIncident = async (req, res) => {
     ).lean();
 
     if (!student) {
-      return res.status(404).json({ message: 'Student not found in the selected class.' });
+      return res.status(403).json({ message: 'You are not allowed to log incident for this student.' });
     }
 
     const created = await Incident.create({
@@ -82,9 +103,20 @@ const logIncident = async (req, res) => {
       },
     });
 
+    await writeAudit(req, {
+      action: 'incident.create',
+      entityType: 'incident',
+      entityId: String(created._id),
+      metadata: {
+        studentId: String(created.studentId),
+        className: created.className,
+        severity: created.severity,
+      },
+    });
+
     return res.status(201).json({ incident: mapIncident(created.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to log incident.' });
+    return sendServerError(res, error, 'Failed to log incident.');
   }
 };
 
@@ -96,6 +128,10 @@ const updateIncidentParentStatus = async (req, res) => {
 
     if (!incidentId || !['pending', 'read', 'responded'].includes(status)) {
       return res.status(400).json({ message: 'Parent notification status is invalid.' });
+    }
+
+    if (!isValidObjectId(incidentId)) {
+      return res.status(400).json({ message: 'Incident identifier is invalid.' });
     }
 
     const incident = await Incident.findById(incidentId);
@@ -123,9 +159,19 @@ const updateIncidentParentStatus = async (req, res) => {
     }
 
     await incident.save();
+
+    await writeAudit(req, {
+      action: 'incident.parent_status.update',
+      entityType: 'incident',
+      entityId: String(incident._id),
+      metadata: {
+        status: incident.parentNotification.status,
+      },
+    });
+
     return res.json({ incident: mapIncident(incident.toObject()) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update parent notification.' });
+    return sendServerError(res, error, 'Failed to update parent notification.');
   }
 };
 
@@ -150,7 +196,7 @@ const listTeacherIncidents = async (req, res) => {
     const incidents = await Incident.find(query).sort({ createdAt: -1 }).limit(500).lean();
     return res.json({ incidents: incidents.map(mapIncident) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load incidents.' });
+    return sendServerError(res, error, 'Failed to load incidents.');
   }
 };
 
@@ -164,7 +210,7 @@ const listAdminIncidents = async (req, res) => {
     if (className) {
       query.className = className;
     }
-    if (teacherId) {
+    if (teacherId && isValidObjectId(teacherId)) {
       query.teacherId = teacherId;
     }
     if (['low', 'medium', 'high'].includes(severity)) {
@@ -174,7 +220,7 @@ const listAdminIncidents = async (req, res) => {
     const incidents = await Incident.find(query).sort({ createdAt: -1 }).limit(1000).lean();
     return res.json({ incidents: incidents.map(mapIncident) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load incidents.' });
+    return sendServerError(res, error, 'Failed to load incidents.');
   }
 };
 

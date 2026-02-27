@@ -6,9 +6,12 @@ const ClassModel = require('../models/Class');
 const Subject = require('../models/Subject');
 const User = require('../models/User');
 const Report = require('../models/Report');
+const AuditLog = require('../models/AuditLog');
 const { HIKMAH_SUBJECTS } = require('../constants/subjects');
 const { buildAdminReports } = require('../services/reportService');
 const { buildAdminAiAnalytics } = require('../services/adminAnalyticsService');
+const { mapAuditLog, writeAuditLog } = require('../services/auditLogService');
+const { sendServerError } = require('../utils/safeError');
 const {
   normalizeEmail,
   normalizeIdentifier,
@@ -23,6 +26,19 @@ const IMPORT_MAX_BYTES = 6 * 1024 * 1024;
 const GENERATED_PASSWORD_LENGTH = 16;
 
 const asTrimmed = (value) => String(value || '').trim();
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(asTrimmed(value));
+
+const writeAudit = async (req, { action, entityType, entityId, metadata = {} }) =>
+  writeAuditLog({
+    actorId: req.user?.id,
+    actorRole: req.user?.role,
+    action,
+    entityType,
+    entityId,
+    metadata,
+    ipAddress: req.ip,
+    userAgent: req.headers?.['user-agent'] || '',
+  });
 
 const toBoolean = (value) => {
   if (typeof value === 'boolean') {
@@ -392,7 +408,53 @@ const listOverview = async (_req, res) => {
       availableSubjects,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to fetch admin overview.' });
+    return sendServerError(res, error, 'Failed to fetch admin overview.');
+  }
+};
+
+const listAuditLogs = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 100, 1), 500);
+    const action = asTrimmed(req.query?.action);
+    const entityType = asTrimmed(req.query?.entityType);
+    const actorRole = asTrimmed(req.query?.actorRole);
+    const entityId = asTrimmed(req.query?.entityId);
+    const from = asTrimmed(req.query?.from);
+    const to = asTrimmed(req.query?.to);
+    const fromDate = from ? new Date(from) : null;
+    const toDate = to ? new Date(to) : null;
+
+    const query = {};
+    if (action) {
+      query.action = action;
+    }
+    if (entityType) {
+      query.entityType = entityType;
+    }
+    if (actorRole) {
+      query.actorRole = actorRole;
+    }
+    if (entityId) {
+      query.entityId = entityId;
+    }
+    if (from || to) {
+      if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+        return res.status(400).json({ message: 'Invalid date range.' });
+      }
+
+      query.createdAt = {};
+      if (from) {
+        query.createdAt.$gte = fromDate;
+      }
+      if (to) {
+        query.createdAt.$lte = toDate;
+      }
+    }
+
+    const logs = await AuditLog.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    return res.json({ logs: logs.map(mapAuditLog) });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to load audit logs.');
   }
 };
 
@@ -408,7 +470,7 @@ const getReports = async (req, res) => {
 
     return res.json(reports);
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to build reports.' });
+    return sendServerError(res, error, 'Failed to build reports.');
   }
 };
 
@@ -417,7 +479,7 @@ const getAiAnalytics = async (_req, res) => {
     const insights = await buildAdminAiAnalytics();
     return res.json(insights);
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to compute analytics insights.' });
+    return sendServerError(res, error, 'Failed to compute analytics insights.');
   }
 };
 
@@ -450,9 +512,21 @@ const addTeacher = async (req, res) => {
       subject: user.subject || user.subjects?.[0] || '',
     });
 
+    await writeAudit(req, {
+      action: 'admin.teacher.create',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        role: user.role,
+        email: user.email || '',
+        classes: user.classes || [],
+        subject: user.subject || user.subjects?.[0] || '',
+      },
+    });
+
     return res.status(201).json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to add teacher.' });
+    return sendServerError(res, error, 'Failed to add teacher.');
   }
 };
 
@@ -477,9 +551,21 @@ const addStudent = async (req, res) => {
     }
 
     const user = await User.create(payload);
+
+    await writeAudit(req, {
+      action: 'admin.student.create',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        role: user.role,
+        email: user.email || '',
+        className: user.classes?.[0] || '',
+      },
+    });
+
     return res.status(201).json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to add student.' });
+    return sendServerError(res, error, 'Failed to add student.');
   }
 };
 
@@ -506,14 +592,29 @@ const addClass = async (req, res) => {
       subjects: [],
     });
 
+    await writeAudit(req, {
+      action: 'admin.class.create',
+      entityType: 'class',
+      entityId: String(created._id),
+      metadata: {
+        name: created.name,
+        grade: created.grade || '',
+        section: created.section || '',
+      },
+    });
+
     return res.status(201).json({ classItem: mapClassPayload(created) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to add class.' });
+    return sendServerError(res, error, 'Failed to add class.');
   }
 };
 
 const deleteUser = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'User identifier is invalid.' });
+    }
+
     const user = await User.findById(req.params.id);
 
     if (!user || !['teacher', 'student'].includes(user.role)) {
@@ -526,13 +627,24 @@ const deleteUser = async (req, res) => {
 
     await User.deleteOne({ _id: user._id });
 
+    await writeAudit(req, {
+      action: 'admin.user.delete',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        role: user.role,
+        email: user.email || '',
+        name: user.name || '',
+      },
+    });
+
     return res.json({
       success: true,
       deletedUserId: String(user._id),
       role: user.role,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to delete user.' });
+    return sendServerError(res, error, 'Failed to delete user.');
   }
 };
 
@@ -542,6 +654,10 @@ const removeStudent = async (req, res) => deleteUser(req, res);
 
 const removeClass = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Class identifier is invalid.' });
+    }
+
     const classItem = await ClassModel.findById(req.params.id);
     if (!classItem) {
       return res.status(404).json({ message: 'Class not found.' });
@@ -561,13 +677,26 @@ const removeClass = async (req, res) => {
     await ClassModel.deleteOne({ _id: classItem._id });
     await User.updateMany({ role: 'teacher' }, { $pull: { classes: classItem.name } });
 
+    await writeAudit(req, {
+      action: 'admin.class.delete',
+      entityType: 'class',
+      entityId: String(classItem._id),
+      metadata: {
+        name: classItem.name,
+      },
+    });
+
     return res.json({ success: true, deletedClassId: String(classItem._id) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to remove class.' });
+    return sendServerError(res, error, 'Failed to remove class.');
   }
 };
 const updateTeacherAssignment = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Teacher identifier is invalid.' });
+    }
+
     const classes = normalizeClasses(req.body?.classes || []);
     const subjects = req.body?.subject
       ? [req.body.subject]
@@ -609,14 +738,28 @@ const updateTeacherAssignment = async (req, res) => {
       subject: subjectResolve.subject,
     });
 
+    await writeAudit(req, {
+      action: 'admin.teacher.assignment.update',
+      entityType: 'user',
+      entityId: String(teacher._id),
+      metadata: {
+        classes,
+        subject: subjectResolve.subject,
+      },
+    });
+
     return res.json({ user: teacher.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update teacher assignment.' });
+    return sendServerError(res, error, 'Failed to update teacher assignment.');
   }
 };
 
 const updateStudentAssignment = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Student identifier is invalid.' });
+    }
+
     const classes = req.body?.className ? [req.body.className] : req.body?.classes || [];
     const classResolve = resolveStudentClass(classes);
 
@@ -636,14 +779,27 @@ const updateStudentAssignment = async (req, res) => {
       return res.status(404).json({ message: 'Student not found.' });
     }
 
+    await writeAudit(req, {
+      action: 'admin.student.assignment.update',
+      entityType: 'user',
+      entityId: String(student._id),
+      metadata: {
+        className: classResolve.className,
+      },
+    });
+
     return res.json({ user: student.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update student assignment.' });
+    return sendServerError(res, error, 'Failed to update student assignment.');
   }
 };
 
 const updateUser = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'User identifier is invalid.' });
+    }
+
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
@@ -757,14 +913,27 @@ const updateUser = async (req, res) => {
       });
     }
 
+    await writeAudit(req, {
+      action: 'admin.user.update',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        changedFields: Object.keys(updates),
+      },
+    });
+
     return res.json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update user.' });
+    return sendServerError(res, error, 'Failed to update user.');
   }
 };
 
 const setUserStatus = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'User identifier is invalid.' });
+    }
+
     if (typeof req.body?.active !== 'boolean') {
       return res.status(400).json({ message: 'The active flag must be a boolean.' });
     }
@@ -779,16 +948,30 @@ const setUserStatus = async (req, res) => {
     }
 
     user.isActive = req.body.active;
+    user.tokenVersion = Number(user.tokenVersion || 0) + 1;
     await user.save();
+
+    await writeAudit(req, {
+      action: 'admin.user.status.update',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        active: user.isActive !== false,
+      },
+    });
 
     return res.json({ user: user.toSafeObject() });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to update user status.' });
+    return sendServerError(res, error, 'Failed to update user status.');
   }
 };
 
 const resetUserPassword = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'User identifier is invalid.' });
+    }
+
     const newPassword = String(req.body?.newPassword || '');
     if (!newPassword) {
       return res.status(400).json({ message: 'New password is required.' });
@@ -804,11 +987,21 @@ const resetUserPassword = async (req, res) => {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    user.tokenVersion = Number(user.tokenVersion || 0) + 1;
     await user.save();
+
+    await writeAudit(req, {
+      action: 'admin.user.password.reset',
+      entityType: 'user',
+      entityId: String(user._id),
+      metadata: {
+        role: user.role,
+      },
+    });
 
     return res.json({ success: true, userId: String(user._id) });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to reset password.' });
+    return sendServerError(res, error, 'Failed to reset password.');
   }
 };
 
@@ -1242,38 +1435,59 @@ const importUsers = async (req, res) => {
 
       return res.status(500).json({
         message: 'Catastrophic error detected. Import transaction was rolled back.',
-        debug: process.env.NODE_ENV === 'production' ? undefined : transactionError.message,
       });
     } finally {
       await session.endSession();
     }
 
-    return res.json(
-      finalizeImportResponse({
+    const response = finalizeImportResponse({
+      importedStudents,
+      importedTeachers,
+      skipped,
+      skippedDuplicates,
+      errors,
+      dryRun: false,
+      generatedPasswordCount,
+    });
+
+    await writeAudit(req, {
+      action: 'admin.users.import',
+      entityType: 'user',
+      entityId: 'bulk-import',
+      metadata: {
         importedStudents,
         importedTeachers,
         skipped,
         skippedDuplicates,
-        errors,
-        dryRun: false,
-        generatedPasswordCount,
-      })
-    );
+      },
+    });
+
+    return res.json(response);
   } catch (error) {
     const status = Number(error?.status || 500);
     return res.status(status).json({
-      message: error.message || 'Failed to import users.',
+      message: status >= 500 ? 'Failed to import users.' : error.message || 'Failed to import users.',
       ...(error.details ? { details: error.details } : {}),
     });
   }
 };
 
-const exportUsers = async (_req, res) => {
+const exportUsers = async (req, res) => {
   try {
     const [teachers, students] = await Promise.all([
       User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
       User.find({ role: 'student' }).sort({ name: 1 }).lean(),
     ]);
+
+    await writeAudit(req, {
+      action: 'admin.users.export',
+      entityType: 'user',
+      entityId: 'bulk-export',
+      metadata: {
+        teacherCount: teachers.length,
+        studentCount: students.length,
+      },
+    });
 
     return res.json({
       teachers: teachers.map((user) => ({
@@ -1282,7 +1496,6 @@ const exportUsers = async (_req, res) => {
         email: user.email,
         subject: user.subject || user.subjects?.[0] || '',
         classes: user.classes || [],
-        password: '',
         isActive: user.isActive !== false,
       })),
       students: students.map((user) => ({
@@ -1291,17 +1504,17 @@ const exportUsers = async (_req, res) => {
         email: user.email,
         className: user.classes?.[0] || '',
         classes: user.classes || [],
-        password: '',
         isActive: user.isActive !== false,
       })),
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to export users.' });
+    return sendServerError(res, error, 'Failed to export users.');
   }
 };
 
 module.exports = {
   listOverview,
+  listAuditLogs,
   getReports,
   getAiAnalytics,
   importUsers,

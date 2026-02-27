@@ -17,6 +17,7 @@ const {
   setUserStatus,
   resetUserPassword,
   deleteUser,
+  listAuditLogs,
 } = require('../controllers/adminController');
 const { getAdminScheduleOverview } = require('../controllers/scheduleController');
 const {
@@ -38,6 +39,7 @@ const router = express.Router();
 router.use(verifyToken, adminOnly);
 
 router.get('/overview', listOverview);
+router.get('/audit-logs', listAuditLogs);
 router.get('/reports', getReports);
 router.get('/ai-analytics', getAiAnalytics);
 router.get('/intelligence', getAdminIntelligenceOverview);

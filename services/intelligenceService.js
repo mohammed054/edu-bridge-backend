@@ -252,6 +252,34 @@ const buildRuleBasedNudges = ({ attendance, incidents, engagement, pendingHomewo
   return nudges;
 };
 
+const buildContributingFactors = ({ attendance, incidents, engagement, pendingHomeworkCount }) => {
+  const factors = [];
+
+  if ((incidents.high || 0) >= 1) {
+    factors.push('High-severity behavior incident');
+  } else if ((incidents.medium || 0) >= 2 || (incidents.low || 0) >= 3) {
+    factors.push('Repeated behavior incidents');
+  }
+
+  if ((attendance.absent || 0) >= 2 || (attendance.late || 0) >= 3) {
+    factors.push('Attendance concerns');
+  }
+
+  if (engagement.level === 'Low') {
+    factors.push('Low parent engagement');
+  }
+
+  if (pendingHomeworkCount >= 2) {
+    factors.push('Missing homework pattern');
+  }
+
+  if (!factors.length) {
+    factors.push('No critical factor identified');
+  }
+
+  return factors;
+};
+
 const buildRiskProfile = ({ attendance, incidents, engagement, pendingHomeworkCount }) => {
   let score = 0;
 
@@ -285,6 +313,12 @@ const buildRiskProfile = ({ attendance, incidents, engagement, pendingHomeworkCo
 
   return {
     riskIndex: levelFromRiskScore(score),
+    contributingFactors: buildContributingFactors({
+      attendance,
+      incidents,
+      engagement,
+      pendingHomeworkCount,
+    }),
     nudges: buildRuleBasedNudges({ attendance, incidents, engagement, pendingHomeworkCount }),
   };
 };
@@ -309,14 +343,13 @@ const buildStudentIntelligenceProfiles = ({ students, attendanceByStudent, incid
       studentName: student.name || '',
       className: (student.classes || [])[0] || '',
       riskIndex: risk.riskIndex,
+      contributingFactors: risk.contributingFactors,
       ruleBasedNudges: risk.nudges,
       attendance,
       incidents,
       parentEngagement: engagement,
       pendingHomeworkCount,
-      weeklySummary: `${student.name || 'Student'}: incidents ${incidents.total}, absences ${
-        attendance.absent
-      }, parent engagement ${engagement.level}.`,
+      weeklySummary: `${student.name || 'Student'}: ${risk.riskIndex} risk (${risk.contributingFactors.join(', ')}).`,
     };
   });
 
@@ -437,6 +470,16 @@ const buildTeacherDashboardInsights = async (teacherId) => {
   });
 
   const common = buildCommonOverview({ profiles, incidentsLast30Days: incidents });
+  const riskStudents = profiles
+    .filter((item) => item.riskIndex !== 'Low')
+    .map((item) => ({
+      studentId: item.studentId,
+      studentName: item.studentName,
+      className: item.className,
+      riskLevel: item.riskIndex,
+      contributingFactors: item.contributingFactors,
+      ruleBasedNudges: item.ruleBasedNudges,
+    }));
 
   return {
     generatedAt: new Date().toISOString(),
@@ -449,13 +492,12 @@ const buildTeacherDashboardInsights = async (teacherId) => {
       studentName: item.studentName,
       className: item.className,
       level: item.parentEngagement.level,
-      responseTimeHours: item.parentEngagement.avgResponseHours,
-      readRate: item.parentEngagement.readRate,
-      responseRate: item.parentEngagement.responseRate,
-      frequency: item.parentEngagement.frequencyLast30Days,
     })),
-    studentsAtRisk: profiles.filter((item) => item.riskIndex !== 'Low'),
-    weeklySummary: profiles.slice(0, 6).map((item) => item.weeklySummary),
+    studentsAtRisk: riskStudents,
+    weeklySummary: riskStudents.slice(0, 6).map((item) => {
+      const reason = item.contributingFactors[0] || 'No critical factor identified';
+      return `${item.studentName}: ${item.riskLevel} risk (${reason}).`;
+    }),
   };
 };
 
@@ -483,12 +525,25 @@ const buildAdminIntelligenceOverview = async () => {
   });
 
   const common = buildCommonOverview({ profiles, incidentsLast30Days: incidents });
+  const riskStudents = profiles
+    .filter((item) => item.riskIndex !== 'Low')
+    .map((item) => ({
+      studentId: item.studentId,
+      studentName: item.studentName,
+      className: item.className,
+      riskLevel: item.riskIndex,
+      contributingFactors: item.contributingFactors,
+      ruleBasedNudges: item.ruleBasedNudges,
+    }));
 
   return {
     generatedAt: new Date().toISOString(),
     ...common,
-    studentsAtRisk: profiles.filter((item) => item.riskIndex !== 'Low'),
-    weeklySummary: profiles.slice(0, 10).map((item) => item.weeklySummary),
+    studentsAtRisk: riskStudents,
+    weeklySummary: riskStudents.slice(0, 10).map((item) => {
+      const reason = item.contributingFactors[0] || 'No critical factor identified';
+      return `${item.studentName}: ${item.riskLevel} risk (${reason}).`;
+    }),
   };
 };
 
