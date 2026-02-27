@@ -1,9 +1,11 @@
 ﻿const ClassModel = require('../models/Class');
 const Feedback = require('../models/Feedback');
 const Homework = require('../models/Homework');
+const Incident = require('../models/Incident');
 const Subject = require('../models/Subject');
 const Survey = require('../models/Survey');
 const SurveyResponse = require('../models/SurveyResponse');
+const AttendanceRecord = require('../models/AttendanceRecord');
 const User = require('../models/User');
 const { FEEDBACK_CATEGORY_KEYS } = require('../constants/feedbackCatalog');
 
@@ -103,21 +105,46 @@ const buildCategoryBreakdown = async () => {
 };
 
 const buildAttendanceBehaviorByStudent = async () => {
-  const students = await User.find(
-    { role: 'student' },
-    { name: 1, email: 1, classes: 1, absentDays: 1, negativeReports: 1 }
-  )
-    .sort({ name: 1 })
-    .lean();
+  const [students, attendanceRecords, incidents] = await Promise.all([
+    User.find({ role: 'student' }, { name: 1, email: 1, classes: 1 }).sort({ name: 1 }).lean(),
+    AttendanceRecord.find({}, { entries: 1 }).lean(),
+    Incident.find({}, { studentId: 1 }).lean(),
+  ]);
 
-  return students.map((student) => ({
-    id: String(student._id),
-    name: student.name,
-    email: student.email || '',
-    classes: student.classes || [],
-    absentDays: Number(student.absentDays || 0),
-    negativeReports: Number(student.negativeReports || 0),
-  }));
+  const absentByStudent = {};
+  attendanceRecords.forEach((record) => {
+    (record.entries || []).forEach((entry) => {
+      if (entry.status !== 'absent') {
+        return;
+      }
+      const studentId = String(entry.studentId || '');
+      if (!studentId) {
+        return;
+      }
+      absentByStudent[studentId] = Number(absentByStudent[studentId] || 0) + 1;
+    });
+  });
+
+  const incidentsByStudent = incidents.reduce((acc, item) => {
+    const studentId = String(item.studentId || '');
+    if (!studentId) {
+      return acc;
+    }
+    acc[studentId] = Number(acc[studentId] || 0) + 1;
+    return acc;
+  }, {});
+
+  return students.map((student) => {
+    const studentId = String(student._id);
+    return {
+      id: studentId,
+      name: student.name,
+      email: student.email || '',
+      classes: student.classes || [],
+      absentDays: Number(absentByStudent[studentId] || 0),
+      negativeReports: Number(incidentsByStudent[studentId] || 0),
+    };
+  });
 };
 
 const buildExamSummaryByClass = async () => {

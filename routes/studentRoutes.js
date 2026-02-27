@@ -2,6 +2,9 @@
 const router = express.Router();
 const { verifyToken, studentOnly } = require('../middleware/authMiddleware');
 const { getStudentProfile } = require('../controllers/profileController');
+const { getStudentPortalData } = require('../controllers/studentPortalController');
+const { getStudentWeeklySchedule } = require('../controllers/scheduleController');
+const { getStudentAttendanceSummary } = require('../controllers/attendanceController');
 const {
   submitStudentToTeacherFeedback,
   submitStudentToAdminFeedback,
@@ -9,6 +12,10 @@ const {
 } = require('../controllers/feedbackController');
 
 router.use(verifyToken, studentOnly);
+
+router.get('/portal', getStudentPortalData);
+router.get('/schedule', getStudentWeeklySchedule);
+router.get('/attendance/summary', getStudentAttendanceSummary);
 
 router.get('/profile', (req, res, next) => {
   req.params.studentId = req.user.id;

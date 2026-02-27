@@ -18,6 +18,12 @@ const {
   resetUserPassword,
   deleteUser,
 } = require('../controllers/adminController');
+const { getAdminScheduleOverview } = require('../controllers/scheduleController');
+const {
+  listAdminIncidents,
+  updateIncidentParentStatus,
+} = require('../controllers/incidentController');
+const { getAdminIntelligenceOverview } = require('../controllers/intelligenceController');
 const {
   listAdminSurveys,
   createSurvey,
@@ -34,6 +40,10 @@ router.use(verifyToken, adminOnly);
 router.get('/overview', listOverview);
 router.get('/reports', getReports);
 router.get('/ai-analytics', getAiAnalytics);
+router.get('/intelligence', getAdminIntelligenceOverview);
+router.get('/schedule', getAdminScheduleOverview);
+router.get('/incidents', listAdminIncidents);
+router.patch('/incidents/:id/parent-status', updateIncidentParentStatus);
 router.post('/import-users', importUsers);
 router.get('/export-users', exportUsers);
 

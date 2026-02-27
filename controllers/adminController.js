@@ -251,6 +251,10 @@ const resolveTeacherSubject = (subjectsInput) => {
     return { error: 'Teacher must be assigned exactly one subject.' };
   }
 
+  if (!HIKMAH_SUBJECTS.includes(cleanSubjects[0])) {
+    return { error: `Subject must be one of the official school subjects: ${HIKMAH_SUBJECTS.join(', ')}` };
+  }
+
   return { subject: cleanSubjects[0] };
 };
 
@@ -373,14 +377,13 @@ const buildUserPayload = async ({
 
 const listOverview = async (_req, res) => {
   try {
-    const [classes, teachers, students, subjects] = await Promise.all([
+    const [classes, teachers, students] = await Promise.all([
       ClassModel.find().sort({ name: 1 }).lean(),
       User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
       User.find({ role: 'student' }).sort({ name: 1 }).lean(),
-      Subject.find().sort({ name: 1 }).lean(),
     ]);
 
-    const availableSubjects = [...new Set([...HIKMAH_SUBJECTS, ...subjects.map((item) => item.name)])];
+    const availableSubjects = [...HIKMAH_SUBJECTS];
 
     return res.json({
       classes: classes.map(mapClassPayload),

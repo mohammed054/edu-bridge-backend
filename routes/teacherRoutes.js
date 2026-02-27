@@ -15,6 +15,17 @@ const {
   updateTeacherAnnouncement,
   deleteTeacherAnnouncement,
 } = require('../controllers/teacherExamController');
+const {
+  markAttendance,
+  getTeacherAttendanceSummary,
+} = require('../controllers/attendanceController');
+const {
+  listTeacherIncidents,
+  logIncident,
+  updateIncidentParentStatus,
+} = require('../controllers/incidentController');
+const { getTeacherWeeklySchedule } = require('../controllers/scheduleController');
+const { getTeacherDashboardInsights } = require('../controllers/intelligenceController');
 
 router.use(verifyToken, teacherOnly);
 
@@ -33,6 +44,17 @@ router.get('/announcements', listTeacherAnnouncements);
 router.post('/announcements', createTeacherAnnouncement);
 router.patch('/announcements/:id', updateTeacherAnnouncement);
 router.delete('/announcements/:id', deleteTeacherAnnouncement);
+
+router.get('/schedule', getTeacherWeeklySchedule);
+
+router.post('/attendance', markAttendance);
+router.get('/attendance/summary', getTeacherAttendanceSummary);
+
+router.get('/incidents', listTeacherIncidents);
+router.post('/incidents', logIncident);
+router.patch('/incidents/:id/parent-status', updateIncidentParentStatus);
+
+router.get('/dashboard-insights', getTeacherDashboardInsights);
 
 module.exports = router;
 
