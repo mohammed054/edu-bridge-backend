@@ -10,6 +10,36 @@ const replySchema = new mongoose.Schema(
   { _id: false }
 );
 
+const statusTimelineSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: ['draft', 'sent', 'reviewed', 'rejected', 'clarification_requested', 'forwarded'],
+      required: true,
+    },
+    actorRole: {
+      type: String,
+      enum: ['teacher', 'student', 'admin', 'parent'],
+      required: true,
+    },
+    actorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    note: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
 const feedbackSchema = new mongoose.Schema(
   {
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -87,6 +117,69 @@ const feedbackSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    workflowStatus: {
+      type: String,
+      enum: ['draft', 'sent', 'reviewed', 'rejected', 'clarification_requested', 'forwarded'],
+      default: 'sent',
+      index: true,
+    },
+    statusTimeline: {
+      type: [statusTimelineSchema],
+      default: [],
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    reviewedByRole: {
+      type: String,
+      enum: ['teacher', 'student', 'admin', 'parent'],
+      default: '',
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    reviewAction: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    reviewNote: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    clarificationRequest: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    parentFeedbackId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Feedback',
+      default: null,
+    },
+    followUpOwnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    followUpOwnerName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    aiLabel: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    aiUpdatedAt: {
+      type: Date,
+      default: null,
+    },
     readBy: {
       type: [
         new mongoose.Schema(
@@ -138,6 +231,24 @@ feedbackSchema.pre('validate', function syncCategoryFields(next) {
     this.text = this.message;
   }
 
+  if (!this.workflowStatus) {
+    this.workflowStatus = 'sent';
+  }
+
+  if (!Array.isArray(this.statusTimeline)) {
+    this.statusTimeline = [];
+  }
+
+  if (!this.statusTimeline.length) {
+    this.statusTimeline.push({
+      status: this.workflowStatus || 'sent',
+      actorRole: this.senderRole || this.senderType || 'student',
+      actorId: this.senderId || null,
+      note: '',
+      createdAt: this.createdAt || new Date(),
+    });
+  }
+
   next();
 });
 
@@ -149,6 +260,8 @@ feedbackSchema.index({ receiverId: 1, receiverRole: 1, createdAt: -1 });
 feedbackSchema.index({ subject: 1, createdAt: -1 });
 feedbackSchema.index({ category: 1, createdAt: -1 });
 feedbackSchema.index({ className: 1, createdAt: -1 });
+feedbackSchema.index({ workflowStatus: 1, createdAt: -1 });
+feedbackSchema.index({ receiverId: 1, workflowStatus: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Feedback', feedbackSchema);
 

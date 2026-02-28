@@ -4,6 +4,7 @@ const Homework = require('../models/Homework');
 const ScheduleEntry = require('../models/ScheduleEntry');
 const User = require('../models/User');
 const { buildStudentWeeklySnapshot } = require('../services/intelligenceService');
+const { listPublishedBroadcastsForUser } = require('../services/broadcastService');
 const { sendServerError } = require('../utils/safeError');
 
 const SCHOOL_DAY_RANGE = [1, 2, 3, 4, 5];
@@ -61,7 +62,7 @@ const getStudentPortalData = async (req, res) => {
       });
     }
 
-    const [announcements, homeworkDocs, feedbackDocs, teachers, scheduleEntries, weeklySnapshot] = await Promise.all([
+    const [announcements, homeworkDocs, feedbackDocs, teachers, scheduleEntries, weeklySnapshot, broadcasts] = await Promise.all([
       Announcement.find({ className }).sort({ createdAt: -1 }).lean(),
       Homework.find({ className }).sort({ createdAt: -1 }).lean(),
       Feedback.find(
@@ -86,6 +87,11 @@ const getStudentPortalData = async (req, res) => {
         { subject: 1 }
       ).lean(),
       buildStudentWeeklySnapshot(student._id),
+      listPublishedBroadcastsForUser({
+        role: 'student',
+        userId: String(student._id),
+        classes: [className],
+      }),
     ]);
 
     const subjectsSet = new Set();
@@ -199,13 +205,24 @@ const getStudentPortalData = async (req, res) => {
       weeklySnapshot,
       subjects,
       recentFeedback: feedbackDocs.slice(0, 8).map(mapFeedbackItem),
-      announcements: announcements.map((item) => ({
-        id: String(item._id),
-        title: item.title || '',
-        description: item.body || '',
-        date: item.createdAt,
-        subject: item.subject || '',
-      })),
+      announcements: [
+        ...announcements.map((item) => ({
+          id: String(item._id),
+          title: item.title || '',
+          description: item.body || '',
+          date: item.createdAt,
+          subject: item.subject || '',
+          source: 'teacher',
+        })),
+        ...(broadcasts || []).map((item) => ({
+          id: item.id,
+          title: item.title || '',
+          description: [item.body, item.actionLine].filter(Boolean).join(' '),
+          date: item.publishedAt || item.createdAt,
+          subject: 'Broadcast',
+          source: 'admin',
+        })),
+      ].sort((left, right) => new Date(right.date) - new Date(left.date)),
     });
   } catch (error) {
     return sendServerError(res, error, 'Failed to load student portal data.');

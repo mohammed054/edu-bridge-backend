@@ -25,7 +25,12 @@ const {
   logIncident,
   updateIncidentParentStatus,
 } = require('../controllers/incidentController');
-const { getTeacherWeeklySchedule } = require('../controllers/scheduleController');
+const {
+  getTeacherWeeklySchedule,
+  createTeacherScheduleEntry,
+  updateTeacherScheduleEntry,
+  deleteTeacherScheduleEntry,
+} = require('../controllers/scheduleController');
 const { getTeacherDashboardInsights } = require('../controllers/intelligenceController');
 const {
   previewGradeSheetImport,
@@ -57,6 +62,9 @@ router.patch('/announcements/:id', updateTeacherAnnouncement);
 router.delete('/announcements/:id', deleteTeacherAnnouncement);
 
 router.get('/schedule', getTeacherWeeklySchedule);
+router.post('/schedule/entries', createTeacherScheduleEntry);
+router.patch('/schedule/entries/:id', updateTeacherScheduleEntry);
+router.delete('/schedule/entries/:id', deleteTeacherScheduleEntry);
 
 router.post('/attendance', incidentRateLimiter, markAttendance);
 router.get('/attendance/summary', getTeacherAttendanceSummary);

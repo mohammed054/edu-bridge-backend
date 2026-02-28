@@ -1,42 +1,52 @@
-﻿const FEEDBACK_CATEGORIES = [
+const FEEDBACK_CATEGORIES = [
   {
     key: 'academic',
     label: 'Academic',
     options: [
-      "Didn't understand topic",
-      'Teacher explained well',
-      'Need additional examples',
-      'Need revision support',
-    ],
-  },
-  {
-    key: 'homework',
-    label: 'Homework',
-    options: [
-      "Didn't submit homework",
-      'Struggled with assignment',
-      'Completed on time',
-      'Need help with time planning',
+      'Difficulty understanding lesson objective',
+      'Need targeted revision support',
+      'Need more guided examples',
+      'Assessment preparation concern',
     ],
   },
   {
     key: 'behavior',
     label: 'Behavior',
     options: [
-      'Distracted in class',
-      'Helped classmates',
-      'Showed respectful conduct',
-      'Needs behavior follow-up',
+      'Classroom focus concern',
+      'Disruptive interaction observed',
+      'Respect and conduct reminder needed',
+      'Positive conduct noted',
     ],
   },
   {
-    key: 'participation',
-    label: 'Participation',
+    key: 'attendance',
+    label: 'Attendance',
     options: [
-      "Didn't answer questions",
-      'Volunteered answers',
-      'Participated consistently',
-      'Needs encouragement to engage',
+      'Frequent lateness observed',
+      'Absence affecting continuity',
+      'Attendance inconsistency this week',
+      'Attendance improved this week',
+    ],
+  },
+  {
+    key: 'general',
+    label: 'General',
+    options: [
+      'General progress update',
+      'Parent follow-up recommended',
+      'Request meeting and alignment',
+      'Administrative support requested',
+    ],
+  },
+  {
+    key: 'urgent',
+    label: 'Urgent',
+    options: [
+      'Immediate intervention required',
+      'High-risk pattern detected',
+      'Escalate to administration',
+      'Parent contact required today',
     ],
   },
   {
@@ -45,6 +55,16 @@
     options: ['Custom note'],
   },
   // Legacy keys kept for existing records compatibility.
+  {
+    key: 'homework',
+    label: 'General (Legacy)',
+    options: ['Homework follow-up'],
+  },
+  {
+    key: 'participation',
+    label: 'Behavior (Legacy)',
+    options: ['Participation note'],
+  },
   {
     key: 'moral',
     label: 'Behavior (Legacy)',

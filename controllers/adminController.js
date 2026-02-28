@@ -260,18 +260,24 @@ const syncTeacherInClasses = async ({ teacherId, classNames, subject, session } 
     options
   );
 };
-const resolveTeacherSubject = (subjectsInput) => {
+const resolveTeacherSubject = (subjectsInput, allowedSubjects = HIKMAH_SUBJECTS) => {
   const cleanSubjects = normalizeSubjects(subjectsInput);
 
   if (cleanSubjects.length !== 1) {
     return { error: 'Teacher must be assigned exactly one subject.' };
   }
 
-  if (!HIKMAH_SUBJECTS.includes(cleanSubjects[0])) {
-    return { error: `Subject must be one of the official school subjects: ${HIKMAH_SUBJECTS.join(', ')}` };
+  if (!allowedSubjects.includes(cleanSubjects[0])) {
+    return { error: `Subject must be one of the registered subjects: ${allowedSubjects.join(', ')}` };
   }
 
   return { subject: cleanSubjects[0] };
+};
+
+const loadAllowedSubjectNames = async () => {
+  const docs = await Subject.find({}, { name: 1 }).lean();
+  const names = docs.map((item) => asTrimmed(item.name)).filter(Boolean);
+  return [...new Set([...HIKMAH_SUBJECTS, ...names])];
 };
 
 const resolveStudentClass = (classesInput) => {
@@ -289,6 +295,12 @@ const mapClassPayload = (item) => ({
   name: item.name,
   grade: item.grade || '',
   section: item.section || '',
+});
+
+const mapSubjectPayload = (item) => ({
+  id: String(item._id),
+  name: item.name || '',
+  maxMarks: Number(item.maxMarks || 100),
 });
 
 const mapTeacherPayload = (item) => ({
@@ -357,7 +369,8 @@ const buildUserPayload = async ({
   }
 
   if (role === 'teacher') {
-    const subjectResolve = resolveTeacherSubject(subjects);
+    const allowedSubjects = await loadAllowedSubjectNames();
+    const subjectResolve = resolveTeacherSubject(subjects, allowedSubjects);
     if (subjectResolve.error) {
       return { error: subjectResolve.error };
     }
@@ -393,18 +406,20 @@ const buildUserPayload = async ({
 
 const listOverview = async (_req, res) => {
   try {
-    const [classes, teachers, students] = await Promise.all([
+    const [classes, teachers, students, subjectDocs] = await Promise.all([
       ClassModel.find().sort({ name: 1 }).lean(),
       User.find({ role: 'teacher' }).sort({ name: 1 }).lean(),
       User.find({ role: 'student' }).sort({ name: 1 }).lean(),
+      Subject.find({}, { name: 1 }).sort({ name: 1 }).lean(),
     ]);
 
-    const availableSubjects = [...HIKMAH_SUBJECTS];
+    const availableSubjects = [...new Set([...HIKMAH_SUBJECTS, ...subjectDocs.map((item) => asTrimmed(item.name)).filter(Boolean)])];
 
     return res.json({
       classes: classes.map(mapClassPayload),
       teachers: teachers.map(mapTeacherPayload),
       students: students.map(mapStudentPayload),
+      subjects: subjectDocs.map(mapSubjectPayload),
       availableSubjects,
     });
   } catch (error) {
@@ -609,6 +624,125 @@ const addClass = async (req, res) => {
   }
 };
 
+const addSubject = async (req, res) => {
+  try {
+    const name = normalizeIdentifier(req.body?.name);
+    const maxMarks = Number(req.body?.maxMarks || 100);
+
+    if (!name) {
+      return res.status(400).json({ message: 'Subject name is required.' });
+    }
+    if (Number.isNaN(maxMarks) || maxMarks <= 0 || maxMarks > 1000) {
+      return res.status(400).json({ message: 'Subject max marks is invalid.' });
+    }
+
+    const exists = await Subject.findOne({ name });
+    if (exists) {
+      return res.status(409).json({ message: 'Subject already exists.' });
+    }
+
+    const created = await Subject.create({ name, maxMarks });
+    await writeAudit(req, {
+      action: 'admin.subject.create',
+      entityType: 'subject',
+      entityId: String(created._id),
+      metadata: {
+        name: created.name,
+      },
+    });
+
+    return res.status(201).json({ subject: mapSubjectPayload(created) });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to add subject.');
+  }
+};
+
+const updateSubject = async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Subject identifier is invalid.' });
+    }
+
+    const subject = await Subject.findById(req.params.id);
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found.' });
+    }
+
+    if (req.body?.name !== undefined) {
+      const name = normalizeIdentifier(req.body.name);
+      if (!name) {
+        return res.status(400).json({ message: 'Subject name is required.' });
+      }
+      const duplicate = await Subject.findOne({ _id: { $ne: subject._id }, name });
+      if (duplicate) {
+        return res.status(409).json({ message: 'Subject name already exists.' });
+      }
+      subject.name = name;
+    }
+
+    if (req.body?.maxMarks !== undefined) {
+      const maxMarks = Number(req.body.maxMarks);
+      if (Number.isNaN(maxMarks) || maxMarks <= 0 || maxMarks > 1000) {
+        return res.status(400).json({ message: 'Subject max marks is invalid.' });
+      }
+      subject.maxMarks = maxMarks;
+    }
+
+    await subject.save();
+    await writeAudit(req, {
+      action: 'admin.subject.update',
+      entityType: 'subject',
+      entityId: String(subject._id),
+      metadata: {
+        name: subject.name,
+        maxMarks: subject.maxMarks,
+      },
+    });
+
+    return res.json({ subject: mapSubjectPayload(subject) });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to update subject.');
+  }
+};
+
+const removeSubject = async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Subject identifier is invalid.' });
+    }
+
+    const subject = await Subject.findById(req.params.id);
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found.' });
+    }
+
+    const linkedTeachers = await User.countDocuments({
+      role: 'teacher',
+      $or: [{ subject: subject.name }, { subjects: subject.name }],
+    });
+    if (linkedTeachers > 0) {
+      return res.status(400).json({
+        message: 'Cannot remove subject while teachers are still assigned to it.',
+      });
+    }
+
+    await Subject.deleteOne({ _id: subject._id });
+
+    await writeAudit(req, {
+      action: 'admin.subject.delete',
+      entityType: 'subject',
+      entityId: String(subject._id),
+      metadata: {
+        name: subject.name,
+      },
+    });
+
+    return res.json({ success: true, deletedSubjectId: String(subject._id) });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to remove subject.');
+  }
+};
+
 const deleteUser = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
@@ -704,7 +838,8 @@ const updateTeacherAssignment = async (req, res) => {
         ? req.body.subjects
         : [];
 
-    const subjectResolve = resolveTeacherSubject(subjects);
+    const allowedSubjects = await loadAllowedSubjectNames();
+    const subjectResolve = resolveTeacherSubject(subjects, allowedSubjects);
     if (subjectResolve.error) {
       return res.status(400).json({ message: subjectResolve.error });
     }
@@ -870,7 +1005,8 @@ const updateUser = async (req, res) => {
         const rawSubjects = req.body?.subject
           ? [req.body.subject]
           : ensureArray(req.body?.subjects);
-        const subjectResolve = resolveTeacherSubject(rawSubjects);
+        const allowedSubjects = await loadAllowedSubjectNames();
+        const subjectResolve = resolveTeacherSubject(rawSubjects, allowedSubjects);
 
         if (subjectResolve.error) {
           return res.status(400).json({ message: subjectResolve.error });
@@ -1108,6 +1244,7 @@ const importUsers = async (req, res) => {
       classNames.length ? ClassModel.find({ name: { $in: classNames } }, { name: 1 }).lean() : [],
       subjects.length ? Subject.find({ name: { $in: subjects } }, { name: 1 }).lean() : [],
     ]);
+    const allowedSubjects = await loadAllowedSubjectNames();
 
     const existingEmails = new Set(existingUsers.map((item) => item.email));
     const existingClasses = new Set(existingClassesDocs.map((item) => item.name));
@@ -1236,7 +1373,7 @@ const importUsers = async (req, res) => {
 
       seenEmails.add(teacher.email);
 
-      const subjectResolve = resolveTeacherSubject([teacher.subject]);
+      const subjectResolve = resolveTeacherSubject([teacher.subject], allowedSubjects);
       if (subjectResolve.error) {
         skipped += 1;
         pushImportError(errors, {
@@ -1522,6 +1659,9 @@ module.exports = {
   addTeacher,
   addStudent,
   addClass,
+  addSubject,
+  updateSubject,
+  removeSubject,
   removeTeacher,
   removeStudent,
   removeClass,

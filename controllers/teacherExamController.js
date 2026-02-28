@@ -1,6 +1,7 @@
 const Announcement = require('../models/Announcement');
 const Homework = require('../models/Homework');
 const User = require('../models/User');
+const { listPublishedBroadcastsForUser } = require('../services/broadcastService');
 const { sendServerError } = require('../utils/safeError');
 
 const normalizeSubject = (value) => String(value || '').trim();
@@ -138,7 +139,7 @@ const getTeacherExams = async (req, res) => {
       announcementQuery.subject = { $in: teacherSubjects };
     }
 
-    const [students, homeworkDocs, announcementDocs] = await Promise.all([
+    const [students, homeworkDocs, announcementDocs, broadcasts] = await Promise.all([
       User.find(
         {
           role: 'student',
@@ -155,6 +156,11 @@ const getTeacherExams = async (req, res) => {
         .lean(),
       Homework.find(homeworkQuery).sort({ createdAt: -1 }).lean(),
       Announcement.find(announcementQuery).sort({ createdAt: -1 }).lean(),
+      listPublishedBroadcastsForUser({
+        role: 'teacher',
+        userId: req.user.id,
+        classes: teacherClasses,
+      }),
     ]);
 
     const grouped = teacherClasses.map((className) => ({
@@ -173,6 +179,7 @@ const getTeacherExams = async (req, res) => {
       subjects: teacherSubjects,
       homework: homeworkDocs.map(mapHomework),
       announcements: announcementDocs.map(mapAnnouncement),
+      broadcasts: broadcasts || [],
     });
   } catch (error) {
     return sendServerError(res, error, 'تعذر تحميل بيانات المعلم.');

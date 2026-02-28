@@ -10,6 +10,7 @@ const { HIKMAH_SUBJECTS } = require('../constants/subjects');
 const { FEEDBACK_CATEGORIES, FEEDBACK_CATEGORY_KEYS, FEEDBACK_CATEGORY_LABEL_BY_KEY } = require('../constants/feedbackCatalog');
 const { normalizeSelections, generateStudentFeedbackDraft, rewriteFeedbackMessage } = require('../services/studentFeedbackAiService');
 const { buildStudentAiSignals } = require('../services/intelligenceService');
+const { createNotification } = require('../services/notificationService');
 
 const asTrimmed = (v) => String(v || '').trim();
 const isValidObjectId = (v) => mongoose.Types.ObjectId.isValid(asTrimmed(v));
@@ -53,12 +54,31 @@ const mapFeedbackResponse = (item) => ({
   urgency: item.urgency || 'low',
   trendFlags: item.trendFlags || [],
   aiGenerated: item.aiGenerated === true,
+  aiLabel: item.aiLabel || '',
+  aiUpdatedAt: item.aiUpdatedAt || null,
   aiSummary: item.aiSummary || {},
   visualSummary: item.visualSummary || {},
   message: item.message || item.content || item.text || '',
   content: item.content || item.message || item.text || '',
   text: item.text || item.message || item.content || '',
   AIAnalysis: item.AIAnalysis || {},
+  workflowStatus: item.workflowStatus || 'sent',
+  reviewedBy: item.reviewedBy ? String(item.reviewedBy) : '',
+  reviewedByRole: item.reviewedByRole || '',
+  reviewedAt: item.reviewedAt || null,
+  reviewAction: item.reviewAction || '',
+  reviewNote: item.reviewNote || '',
+  clarificationRequest: item.clarificationRequest || '',
+  parentFeedbackId: item.parentFeedbackId ? String(item.parentFeedbackId) : '',
+  followUpOwnerId: item.followUpOwnerId ? String(item.followUpOwnerId) : '',
+  followUpOwnerName: item.followUpOwnerName || '',
+  statusTimeline: (item.statusTimeline || []).map((entry) => ({
+    status: entry.status || '',
+    actorRole: entry.actorRole || '',
+    actorId: entry.actorId ? String(entry.actorId) : '',
+    note: entry.note || '',
+    createdAt: entry.createdAt || null,
+  })),
   replies: (item.replies || []).map((reply) => ({ senderType: reply.senderType || '', text: reply.text || '', createdAt: reply.createdAt || null })),
   createdAt: item.createdAt,
   updatedAt: item.updatedAt,
@@ -85,6 +105,52 @@ const buildFallbackMessage = (studentName, subject, categories, notes) => {
 };
 
 const aiPlaceholder = ({ categories, categoryDetails, notes, status = 'placeholder' }) => ({ status, categories, categoryDetails, notes, updatedAt: new Date().toISOString() });
+
+const appendWorkflowStatus = ({
+  feedback,
+  status,
+  actorRole,
+  actorId,
+  note = '',
+}) => {
+  if (!feedback || !status || !actorRole) {
+    return feedback;
+  }
+
+  feedback.workflowStatus = status;
+  feedback.statusTimeline = Array.isArray(feedback.statusTimeline)
+    ? feedback.statusTimeline
+    : [];
+  feedback.statusTimeline.push({
+    status,
+    actorRole,
+    actorId: actorId || null,
+    note: asTrimmed(note),
+    createdAt: new Date(),
+  });
+  return feedback;
+};
+
+const toStudentDraftPayload = (draft = {}) => {
+  const subjectLine = asTrimmed(
+    draft?.subjectLine ||
+      draft?.summary?.subjectLine ||
+      draft?.title ||
+      'Structured Student Feedback'
+  );
+  const body = asTrimmed(draft?.message || draft?.body || draft?.content || '');
+  const suggestedAction = asTrimmed(
+    draft?.suggestedAction ||
+      draft?.actionLine ||
+      draft?.summary?.actionItems?.[0] ||
+      ''
+  );
+  return {
+    subjectLine,
+    body,
+    suggestedAction,
+  };
+};
 
 const parseFeedbackTypes = (query) => {
   const raw = asTrimmed(query.feedbackType || query.type);
@@ -138,11 +204,23 @@ const createStudentMessageRecord = async ({ student, recipient, feedbackType, su
     message,
     content: message,
     aiGenerated: aiPayload.aiGenerated,
+    aiLabel: aiPayload.aiGenerated ? 'AI-generated draft' : '',
+    aiUpdatedAt: aiPayload.aiGenerated ? new Date() : null,
     urgency: aiPayload.urgency,
     trendFlags: aiPayload.trendFlags,
     aiSummary: aiPayload.aiSummary,
     visualSummary: aiPayload.visualSummary,
     AIAnalysis: aiPayload.AIAnalysis,
+    workflowStatus: 'sent',
+    statusTimeline: [
+      {
+        status: 'sent',
+        actorRole: 'student',
+        actorId: student._id,
+        note: '',
+        createdAt: new Date(),
+      },
+    ],
     timestamp: new Date(),
   });
 };
@@ -307,7 +385,7 @@ const generateFeedback = async (req, res) => {
 const sendStudentFeedbackCore = async ({ req, recipientRole, recipientId, explicitFeedbackType = '' }) => {
   const subject = asTrimmed(req.body?.subject);
   const notes = asTrimmed(req.body?.notes || req.body?.optionalText);
-  const suggestion = asTrimmed(req.body?.suggestion);
+  const suggestion = asTrimmed(req.body?.suggestion || req.body?.actionLine || req.body?.suggestedAction);
   const subcategory = asTrimmed(req.body?.subcategory);
   const className = asTrimmed(req.body?.className);
   if (!subject) throw new Error('Subject is required.');
@@ -332,7 +410,7 @@ const sendStudentFeedbackCore = async ({ req, recipientRole, recipientId, explic
 
   const recipient = await resolveStudentRecipient({ student, recipientRole, recipientId, subject, className });
 
-  let message = asTrimmed(req.body?.message || req.body?.content);
+  let message = asTrimmed(req.body?.message || req.body?.content || req.body?.body || req.body?.aiDraft?.body);
   let aiDraft = req.body?.aiDraft && typeof req.body.aiDraft === 'object' ? req.body.aiDraft : null;
 
   if (!message || !aiDraft) {
@@ -343,7 +421,9 @@ const sendStudentFeedbackCore = async ({ req, recipientRole, recipientId, explic
     aiDraft = await generateStudentFeedbackDraft({ studentName: student.name, recipientRole, subject, selectedCategories: selectedItems, categoryDetails, notes, tone: req.body?.tone || 'constructive', recentFeedback, signals: { ...signals, pendingSurveyCount: Math.max(0, surveys.length - responses) } });
   }
 
-  if (!message) message = asTrimmed(aiDraft?.message) || buildFallbackMessage(student.name, subject, categories, notes);
+  if (!message) {
+    message = asTrimmed(aiDraft?.message || aiDraft?.body) || buildFallbackMessage(student.name, subject, categories, notes);
+  }
   const aiPayload = buildAiPayload(req.body, aiDraft || {});
 
   const feedback = await createStudentMessageRecord({
@@ -358,6 +438,29 @@ const sendStudentFeedbackCore = async ({ req, recipientRole, recipientId, explic
     message,
     suggestion,
     aiPayload,
+  });
+
+  await createNotification({
+    recipientId: recipient.receiverId,
+    recipientRole: recipient.receiverRole,
+    category: 'feedback',
+    urgency: aiPayload.urgency || 'low',
+    title: `New student feedback: ${student.name}`,
+    body: message.slice(0, 280),
+    link:
+      recipient.receiverRole === 'teacher'
+        ? '/teacher'
+        : recipient.receiverRole === 'admin'
+          ? '/admin/feedback'
+          : '/student',
+    sourceType: 'feedback',
+    sourceId: String(feedback._id),
+    metadata: {
+      studentId: String(student._id),
+      className: recipient.className || '',
+      subject,
+      categories,
+    },
   });
 
   return feedback;
@@ -413,7 +516,25 @@ const previewStudentAiFeedback = async (req, res) => {
     const responses = surveys.length ? await SurveyResponse.countDocuments({ surveyId: { $in: surveys.map((s) => s._id) }, respondentId: student._id, respondentRole: 'student' }) : 0;
 
     const draft = await generateStudentFeedbackDraft({ studentName: student.name, recipientRole, subject, selectedCategories: selections, categoryDetails: {}, notes, tone: req.body?.tone || 'constructive', recentFeedback, signals: { ...signals, pendingSurveyCount: Math.max(0, surveys.length - responses) } });
-    return res.json({ editable: true, recipient: { role: recipient.receiverRole, id: String(recipient.receiverId), name: recipient.recipientName }, subject, className: recipient.className, tone: req.body?.tone || 'constructive', draft: { ...draft, trendAnalysis: { ...(draft.trendAnalysis || {}), pendingSurveys: Math.max(0, surveys.length - responses), surveyAssigned: surveys.length } } });
+    const structured = toStudentDraftPayload(draft);
+    return res.json({
+      editable: true,
+      recipient: { role: recipient.receiverRole, id: String(recipient.receiverId), name: recipient.recipientName },
+      subject,
+      className: recipient.className,
+      tone: req.body?.tone || 'constructive',
+      aiLabel: 'AI-generated draft',
+      aiUpdatedAt: new Date().toISOString(),
+      draft: {
+        ...draft,
+        ...structured,
+        trendAnalysis: {
+          ...(draft.trendAnalysis || {}),
+          pendingSurveys: Math.max(0, surveys.length - responses),
+          surveyAssigned: surveys.length,
+        },
+      },
+    });
   } catch (error) {
     return sendServerError(res, error, 'Failed to preview AI feedback.');
   }
@@ -455,6 +576,13 @@ const listFeedbacks = async (req, res) => {
     if (asTrimmed(req.query.senderRole)) query.senderRole = asTrimmed(req.query.senderRole);
     if (asTrimmed(req.query.receiverRole)) query.receiverRole = asTrimmed(req.query.receiverRole);
     if (asTrimmed(req.query.urgency)) query.urgency = asTrimmed(req.query.urgency).toLowerCase();
+    if (asTrimmed(req.query.workflowStatus)) {
+      const statuses = normalizeList(String(req.query.workflowStatus).split(','))
+        .map((entry) => entry.toLowerCase())
+        .filter((entry) => ['draft', 'sent', 'reviewed', 'rejected', 'clarification_requested', 'forwarded'].includes(entry));
+      if (statuses.length === 1) query.workflowStatus = statuses[0];
+      else if (statuses.length > 1) query.workflowStatus = { $in: statuses };
+    }
 
     const categoryFilter = normalizeCategories(String(req.query.category || '').split(','));
     if (categoryFilter.length === 1) query.category = categoryFilter[0];
@@ -508,6 +636,473 @@ const addFeedbackComment = async (req, res) => {
 
 const addReply = async (req, res) => addFeedbackComment(req, res);
 
+const listTeacherReviewQueue = async (req, res) => {
+  try {
+    const className = asTrimmed(req.query?.className);
+    const urgency = asTrimmed(req.query?.urgency).toLowerCase();
+    const category = asTrimmed(req.query?.category).toLowerCase();
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 200, 1), 500);
+
+    if (className && !req.user.classes?.includes(className)) {
+      return res.status(403).json({ message: 'Class access denied.' });
+    }
+
+    const query = {
+      feedbackType: 'student_to_teacher',
+      receiverId: req.user.id,
+      workflowStatus: { $in: ['sent', 'clarification_requested', 'draft'] },
+    };
+
+    if (className) query.className = className;
+    if (['low', 'medium', 'high'].includes(urgency)) query.urgency = urgency;
+    if (FEEDBACK_CATEGORY_KEYS.includes(category)) query.category = category;
+
+    const docs = await Feedback.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    const items = docs
+      .filter((item) => hasSubjectAccess(req.user.subjects || [], item.subject || ''))
+      .map(mapFeedbackResponse);
+
+    return res.json({ queue: items });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to load teacher review queue.');
+  }
+};
+
+const reviewTeacherDraft = async (req, res) => {
+  try {
+    const feedbackId = asTrimmed(req.params?.id || req.body?.feedbackId);
+    const action = asTrimmed(req.body?.action).toLowerCase();
+    const note = asTrimmed(req.body?.note);
+    const clarificationRequest = asTrimmed(req.body?.clarificationRequest || req.body?.note);
+    const tone = asTrimmed(req.body?.tone);
+    const customMessage = asTrimmed(req.body?.message || req.body?.content);
+
+    if (!isValidObjectId(feedbackId)) {
+      return res.status(400).json({ message: 'Feedback identifier is invalid.' });
+    }
+    if (!['accept', 'edit', 'reject', 'clarify'].includes(action)) {
+      return res.status(400).json({ message: 'Review action is invalid.' });
+    }
+
+    const feedback = await Feedback.findOne({
+      _id: feedbackId,
+      feedbackType: 'student_to_teacher',
+      receiverId: req.user.id,
+    });
+
+    if (!feedback) {
+      return res.status(404).json({ message: 'Feedback draft not found.' });
+    }
+
+    if (!hasSubjectAccess(req.user.subjects || [], feedback.subject || '')) {
+      return res.status(403).json({ message: 'Subject access denied.' });
+    }
+
+    feedback.reviewedBy = req.user.id;
+    feedback.reviewedByRole = 'teacher';
+    feedback.reviewedAt = new Date();
+    feedback.reviewAction = action;
+    feedback.reviewNote = note;
+
+    let parentFeedback = null;
+
+    if (action === 'reject') {
+      appendWorkflowStatus({
+        feedback,
+        status: 'rejected',
+        actorRole: 'teacher',
+        actorId: req.user.id,
+        note: note || 'Rejected by teacher.',
+      });
+    } else if (action === 'clarify') {
+      feedback.clarificationRequest = clarificationRequest || 'Please clarify the submitted feedback.';
+      appendWorkflowStatus({
+        feedback,
+        status: 'clarification_requested',
+        actorRole: 'teacher',
+        actorId: req.user.id,
+        note: feedback.clarificationRequest,
+      });
+    } else {
+      let forwardMessage = customMessage || feedback.message || feedback.content || feedback.text || '';
+      if ((action === 'edit' || tone) && forwardMessage) {
+        try {
+          const rewritten = await rewriteFeedbackMessage({
+            text: forwardMessage,
+            tone: tone || 'constructive',
+          });
+          forwardMessage = asTrimmed(rewritten?.rewrittenText) || forwardMessage;
+        } catch {
+          // Ignore rewrite failures and keep manual text.
+        }
+      }
+
+      const parent = await User.findOne(
+        {
+          role: 'parent',
+          linkedStudentIds: feedback.studentId,
+          isActive: { $ne: false },
+        },
+        { _id: 1, name: 1 }
+      ).lean();
+
+      if (parent) {
+        parentFeedback = await Feedback.create({
+          studentId: feedback.studentId,
+          studentName: feedback.studentName,
+          classId: feedback.classId || null,
+          className: feedback.className || '',
+          teacherId: req.user.id,
+          teacherName: req.user.name || 'Teacher',
+          adminId: null,
+          adminName: '',
+          senderId: req.user.id,
+          senderRole: 'teacher',
+          senderType: 'teacher',
+          receiverId: parent._id,
+          receiverRole: 'parent',
+          feedbackType: 'teacher_feedback',
+          subject: feedback.subject || '',
+          category: feedback.category || FEEDBACK_CATEGORY_KEYS[0],
+          subcategory: feedback.subcategory || '',
+          categories: feedback.categories || [feedback.category].filter(Boolean),
+          categoryDetails: feedback.categoryDetails || {},
+          tags: feedback.tags || [],
+          notes: feedback.notes || '',
+          suggestion: feedback.suggestion || '',
+          text: forwardMessage,
+          message: forwardMessage,
+          content: forwardMessage,
+          aiGenerated: feedback.aiGenerated === true,
+          aiLabel: feedback.aiGenerated ? 'AI-generated draft (teacher reviewed)' : '',
+          aiUpdatedAt: feedback.aiGenerated ? new Date() : null,
+          urgency: feedback.urgency || 'low',
+          trendFlags: feedback.trendFlags || [],
+          aiSummary: feedback.aiSummary || {},
+          visualSummary: feedback.visualSummary || {},
+          AIAnalysis: feedback.AIAnalysis || {},
+          workflowStatus: 'sent',
+          statusTimeline: [
+            {
+              status: 'sent',
+              actorRole: 'teacher',
+              actorId: req.user.id,
+              note: action === 'edit' ? 'Edited by teacher before forwarding.' : 'Approved and forwarded by teacher.',
+              createdAt: new Date(),
+            },
+          ],
+          timestamp: new Date(),
+        });
+
+        await createNotification({
+          recipientId: parent._id,
+          recipientRole: 'parent',
+          category: 'feedback',
+          urgency: feedback.urgency || 'medium',
+          title: `New teacher feedback: ${feedback.studentName || 'Student'}`,
+          body: forwardMessage.slice(0, 280),
+          link: '/parent',
+          sourceType: 'feedback',
+          sourceId: String(parentFeedback._id),
+          metadata: {
+            studentId: String(feedback.studentId),
+            className: feedback.className || '',
+            subject: feedback.subject || '',
+          },
+        });
+      }
+
+      feedback.parentFeedbackId = parentFeedback?._id || null;
+      appendWorkflowStatus({
+        feedback,
+        status: 'reviewed',
+        actorRole: 'teacher',
+        actorId: req.user.id,
+        note: action === 'edit' ? 'Edited and reviewed.' : 'Reviewed and accepted.',
+      });
+    }
+
+    await feedback.save();
+
+    await createNotification({
+      recipientId: feedback.studentId,
+      recipientRole: 'student',
+      category: 'feedback',
+      urgency: feedback.urgency || 'medium',
+      title: 'Your feedback has been reviewed',
+      body:
+        action === 'clarify'
+          ? feedback.clarificationRequest || 'Teacher requested clarification.'
+          : action === 'reject'
+            ? 'Your feedback was reviewed and rejected.'
+            : 'Your feedback was reviewed and forwarded.',
+      link: '/student',
+      sourceType: 'feedback',
+      sourceId: String(feedback._id),
+      metadata: {
+        action,
+      },
+    });
+
+    return res.json({
+      feedback: mapFeedbackResponse(feedback.toObject()),
+      parentFeedback: parentFeedback ? mapFeedbackResponse(parentFeedback.toObject()) : null,
+    });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to review feedback draft.');
+  }
+};
+
+const assignFeedbackFollowUpOwner = async (req, res) => {
+  try {
+    const feedbackId = asTrimmed(req.params?.id || req.body?.feedbackId);
+    const ownerId = asTrimmed(req.body?.ownerId);
+
+    if (!isValidObjectId(feedbackId) || !isValidObjectId(ownerId)) {
+      return res.status(400).json({ message: 'Feedback and owner identifiers are required.' });
+    }
+
+    const [feedback, owner] = await Promise.all([
+      Feedback.findById(feedbackId),
+      User.findOne({ _id: ownerId, role: { $in: ['admin', 'teacher'] } }, { _id: 1, name: 1, role: 1 }).lean(),
+    ]);
+
+    if (!feedback) {
+      return res.status(404).json({ message: 'Feedback not found.' });
+    }
+    if (!owner) {
+      return res.status(404).json({ message: 'Follow-up owner not found.' });
+    }
+
+    feedback.followUpOwnerId = owner._id;
+    feedback.followUpOwnerName = owner.name || '';
+    await feedback.save();
+
+    await createNotification({
+      recipientId: owner._id,
+      recipientRole: owner.role,
+      category: 'feedback',
+      urgency: feedback.urgency || 'medium',
+      title: 'New feedback follow-up assignment',
+      body: `${feedback.studentName || 'Student'} · ${feedback.className || ''} · ${feedback.subject || ''}`,
+      link: owner.role === 'admin' ? '/admin/feedback' : '/teacher',
+      sourceType: 'feedback',
+      sourceId: String(feedback._id),
+      metadata: {
+        studentId: String(feedback.studentId),
+        className: feedback.className || '',
+      },
+    });
+
+    return res.json({ feedback: mapFeedbackResponse(feedback.toObject()) });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to assign follow-up owner.');
+  }
+};
+
+const buildFeedbackAiSummaryText = ({ total, urgent, repeatedUrgent, highFrequency, attentionCount }) => {
+  const lines = [
+    `Total filtered feedback cases: ${total}.`,
+    `Urgent cases: ${urgent}.`,
+    `Students with repeated urgent flags: ${repeatedUrgent}.`,
+    `Most frequent issue category: ${highFrequency || 'N/A'}.`,
+    `Students currently needing attention: ${attentionCount}.`,
+    'Advisory: Review high urgency and repeated cases first; all actions require human confirmation.',
+  ];
+  return lines.join(' ');
+};
+
+const listAdminFeedbackIntelligence = async (req, res) => {
+  try {
+    const className = asTrimmed(req.query?.className);
+    const urgency = asTrimmed(req.query?.urgency).toLowerCase();
+    const category = asTrimmed(req.query?.category).toLowerCase();
+    const workflowStatus = asTrimmed(req.query?.workflowStatus).toLowerCase();
+    const studentId = asTrimmed(req.query?.studentId);
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 500, 1), 1500);
+
+    const query = {
+      feedbackType: { $in: ['student_to_teacher', 'student_to_admin'] },
+    };
+    if (className) query.className = className;
+    if (['low', 'medium', 'high'].includes(urgency)) query.urgency = urgency;
+    if (FEEDBACK_CATEGORY_KEYS.includes(category)) query.category = category;
+    if (['draft', 'sent', 'reviewed', 'rejected', 'clarification_requested', 'forwarded'].includes(workflowStatus)) {
+      query.workflowStatus = workflowStatus;
+    }
+    if (studentId && isValidObjectId(studentId)) query.studentId = studentId;
+
+    const records = await Feedback.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    const mapped = records.map(mapFeedbackResponse);
+
+    const urgentRecords = mapped.filter((item) => item.urgency === 'high');
+    const repeatedUrgentByStudent = urgentRecords.reduce((acc, item) => {
+      const key = item.studentId || '';
+      if (!key) return acc;
+      acc[key] = acc[key] || {
+        studentId: item.studentId,
+        studentName: item.studentName,
+        className: item.className,
+        count: 0,
+      };
+      acc[key].count += 1;
+      return acc;
+    }, {});
+
+    const repeatedUrgentCases = Object.values(repeatedUrgentByStudent)
+      .filter((item) => item.count >= 2)
+      .sort((a, b) => b.count - a.count);
+
+    const highFrequencyIssues = Object.entries(
+      mapped.reduce((acc, item) => {
+        const key = item.category || 'other';
+        acc[key] = Number(acc[key] || 0) + 1;
+        return acc;
+      }, {})
+    )
+      .map(([categoryKey, count]) => ({
+        category: categoryKey,
+        label: FEEDBACK_CATEGORY_LABEL_BY_KEY[categoryKey] || categoryKey,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const attentionMap = mapped.reduce((acc, item) => {
+      const key = item.studentId || '';
+      if (!key) return acc;
+      if (!acc[key]) {
+        acc[key] = {
+          studentId: item.studentId,
+          studentName: item.studentName || '',
+          className: item.className || '',
+          score: 0,
+          urgentCount: 0,
+          mediumCount: 0,
+          totalCount: 0,
+        };
+      }
+      acc[key].totalCount += 1;
+      if (item.urgency === 'high') {
+        acc[key].urgentCount += 1;
+        acc[key].score += 3;
+      } else if (item.urgency === 'medium') {
+        acc[key].mediumCount += 1;
+        acc[key].score += 2;
+      } else {
+        acc[key].score += 1;
+      }
+      if (item.workflowStatus === 'clarification_requested') acc[key].score += 1;
+      if (item.workflowStatus === 'sent') acc[key].score += 1;
+      return acc;
+    }, {});
+
+    const studentsNeedingAttention = Object.values(attentionMap)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+
+    const conversationHistory = studentId && isValidObjectId(studentId)
+      ? mapped.filter((item) => item.studentId === studentId)
+      : [];
+
+    const aiSummary = {
+      label: 'AI-generated insight (editable)',
+      updatedAt: new Date().toISOString(),
+      text: buildFeedbackAiSummaryText({
+        total: mapped.length,
+        urgent: urgentRecords.length,
+        repeatedUrgent: repeatedUrgentCases.length,
+        highFrequency: highFrequencyIssues[0]?.label || '',
+        attentionCount: studentsNeedingAttention.length,
+      }),
+    };
+
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        total: mapped.length,
+        urgent: urgentRecords.length,
+        sent: mapped.filter((item) => item.workflowStatus === 'sent').length,
+        reviewed: mapped.filter((item) => item.workflowStatus === 'reviewed').length,
+        clarificationRequested: mapped.filter((item) => item.workflowStatus === 'clarification_requested').length,
+      },
+      table: mapped,
+      repeatedUrgentCases,
+      highFrequencyIssues,
+      studentsNeedingAttention,
+      conversationHistory,
+      aiSummary,
+    });
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to load feedback intelligence.');
+  }
+};
+
+const escapeCsv = (value) => {
+  const text = String(value ?? '');
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+};
+
+const exportAdminFeedbackIntelligence = async (req, res) => {
+  try {
+    const className = asTrimmed(req.query?.className);
+    const urgency = asTrimmed(req.query?.urgency).toLowerCase();
+    const category = asTrimmed(req.query?.category).toLowerCase();
+
+    const query = {
+      feedbackType: { $in: ['student_to_teacher', 'student_to_admin'] },
+    };
+    if (className) query.className = className;
+    if (['low', 'medium', 'high'].includes(urgency)) query.urgency = urgency;
+    if (FEEDBACK_CATEGORY_KEYS.includes(category)) query.category = category;
+
+    const rows = await Feedback.find(query).sort({ createdAt: -1 }).limit(1500).lean();
+    const mapped = rows.map(mapFeedbackResponse);
+
+    const headers = [
+      'feedbackId',
+      'createdAt',
+      'studentName',
+      'className',
+      'subject',
+      'category',
+      'urgency',
+      'workflowStatus',
+      'teacherName',
+      'message',
+    ];
+
+    const csvLines = [
+      headers.join(','),
+      ...mapped.map((item) =>
+        [
+          item.id,
+          item.createdAt || '',
+          item.studentName || '',
+          item.className || '',
+          item.subject || '',
+          item.category || '',
+          item.urgency || '',
+          item.workflowStatus || '',
+          item.teacherName || '',
+          item.message || '',
+        ]
+          .map(escapeCsv)
+          .join(',')
+      ),
+    ];
+
+    const filename = `feedback-intelligence-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(csvLines.join('\n'));
+  } catch (error) {
+    return sendServerError(res, error, 'Failed to export feedback intelligence.');
+  }
+};
+
 module.exports = {
   getFeedbackOptions,
   generateFeedback,
@@ -520,4 +1115,9 @@ module.exports = {
   listFeedbacks,
   addReply,
   addFeedbackComment,
+  listTeacherReviewQueue,
+  reviewTeacherDraft,
+  assignFeedbackFollowUpOwner,
+  listAdminFeedbackIntelligence,
+  exportAdminFeedbackIntelligence,
 };

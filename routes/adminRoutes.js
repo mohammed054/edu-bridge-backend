@@ -8,6 +8,9 @@ const {
   addTeacher,
   addStudent,
   addClass,
+  addSubject,
+  updateSubject,
+  removeSubject,
   removeTeacher,
   removeStudent,
   removeClass,
@@ -19,7 +22,12 @@ const {
   deleteUser,
   listAuditLogs,
 } = require('../controllers/adminController');
-const { getAdminScheduleOverview } = require('../controllers/scheduleController');
+const {
+  getAdminScheduleOverview,
+  createAdminScheduleEntry,
+  updateAdminScheduleEntry,
+  deleteAdminScheduleEntry,
+} = require('../controllers/scheduleController');
 const {
   listAdminIncidents,
   updateIncidentParentStatus,
@@ -44,6 +52,9 @@ router.get('/reports', getReports);
 router.get('/ai-analytics', getAiAnalytics);
 router.get('/intelligence', getAdminIntelligenceOverview);
 router.get('/schedule', getAdminScheduleOverview);
+router.post('/schedule/entries', createAdminScheduleEntry);
+router.patch('/schedule/entries/:id', updateAdminScheduleEntry);
+router.delete('/schedule/entries/:id', deleteAdminScheduleEntry);
 router.get('/incidents', listAdminIncidents);
 router.patch('/incidents/:id/parent-status', updateIncidentParentStatus);
 router.post('/import-users', importUsers);
@@ -64,6 +75,9 @@ router.delete('/users/:id', deleteUser);
 
 router.post('/classes', addClass);
 router.delete('/classes/:id', removeClass);
+router.post('/subjects', addSubject);
+router.patch('/subjects/:id', updateSubject);
+router.delete('/subjects/:id', removeSubject);
 
 router.get('/surveys', listAdminSurveys);
 router.post('/surveys', createSurvey);

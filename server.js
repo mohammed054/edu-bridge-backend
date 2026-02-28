@@ -14,6 +14,8 @@ const profileRoutes = require('./routes/profileRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
 const studentRoutes = require('./routes/studentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const broadcastRoutes = require('./routes/broadcastRoutes');
 
 const app = express();
 app.disable('x-powered-by');
@@ -93,6 +95,8 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/surveys', surveyRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/broadcasts', broadcastRoutes);
 
 app.use('/api/*', (req, res) => {
   res.status(404).json({

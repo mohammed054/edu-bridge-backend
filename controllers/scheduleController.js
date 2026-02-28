@@ -26,6 +26,17 @@ const DAY_INDEX_TO_NAME = {
 };
 
 const asTrimmed = (value) => String(value || '').trim();
+const createHttpError = (message, status = 400) => {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+};
+const respondWithScheduleError = (res, error, fallback) => {
+  if (Number(error?.status) >= 400 && Number(error?.status) < 500) {
+    return res.status(Number(error.status)).json({ message: error.message });
+  }
+  return sendServerError(res, error, fallback);
+};
 
 const resolveDayOfWeek = (rawValue) => {
   const value = asTrimmed(rawValue);
@@ -48,6 +59,12 @@ const sortBySlot = (left, right) => {
 
   return String(left.startTime || '').localeCompare(String(right.startTime || ''));
 };
+
+const isValidTime = (value) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(asTrimmed(value));
+
+const compareTime = (left, right) => asTrimmed(left).localeCompare(asTrimmed(right));
+
+const validateTimeRange = (startTime, endTime) => isValidTime(startTime) && isValidTime(endTime) && compareTime(startTime, endTime) < 0;
 
 const mapScheduleEntry = (entry, classMetaByName = {}) => {
   const classMeta = classMetaByName[entry.className] || {};
@@ -229,8 +246,247 @@ const getAdminScheduleOverview = async (req, res) => {
   }
 };
 
+const resolveTeacherForSchedule = async ({ teacherId }) => {
+  const cleanTeacherId = asTrimmed(teacherId);
+  if (!cleanTeacherId) return null;
+  const teacher = await User.findOne(
+    { _id: cleanTeacherId, role: 'teacher', isActive: { $ne: false } },
+    { _id: 1, name: 1, classes: 1, subject: 1, subjects: 1 }
+  ).lean();
+  return teacher || null;
+};
+
+const createScheduleEntryCore = async ({ actor, body, mode = 'admin' }) => {
+  const className = asTrimmed(body?.className);
+  const dayOfWeek = resolveDayOfWeek(body?.dayOfWeek || body?.day);
+  const startTime = asTrimmed(body?.startTime);
+  const endTime = asTrimmed(body?.endTime);
+  const subject = asTrimmed(body?.subject);
+  const room = asTrimmed(body?.room);
+
+  if (!className || !dayOfWeek || !subject || !startTime || !endTime) {
+    throw createHttpError('Class, day, subject, and time range are required.', 400);
+  }
+  if (!validateTimeRange(startTime, endTime)) {
+    throw createHttpError('Time range is invalid.', 400);
+  }
+
+  const classDoc = await ClassModel.findOne({ name: className }, { name: 1, grade: 1 }).lean();
+  if (!classDoc) {
+    throw createHttpError('Class not found.', 404);
+  }
+
+  let teacherId = asTrimmed(body?.teacherId);
+  let teacherName = asTrimmed(body?.teacherName);
+
+  if (mode === 'teacher') {
+    if (!actor.classes?.includes(className)) {
+      throw createHttpError('Class access denied.', 403);
+    }
+    if (!(actor.subjects || []).some((item) => String(item || '').toLowerCase() === subject.toLowerCase())) {
+      throw createHttpError('Subject access denied.', 403);
+    }
+    teacherId = actor.id;
+    teacherName = actor.name || 'Teacher';
+  } else {
+    if (!teacherId) {
+      throw createHttpError('Teacher identifier is required for admin schedule creation.', 400);
+    }
+    const teacher = await resolveTeacherForSchedule({ teacherId });
+    if (!teacher) {
+      throw createHttpError('Teacher not found.', 404);
+    }
+    if (!(teacher.classes || []).includes(className)) {
+      throw createHttpError('Teacher is not assigned to this class.', 400);
+    }
+    const allowedSubjects = teacher.subject ? [teacher.subject] : teacher.subjects || [];
+    if (!allowedSubjects.some((item) => String(item || '').toLowerCase() === subject.toLowerCase())) {
+      throw createHttpError('Teacher does not own this subject.', 400);
+    }
+    teacherId = String(teacher._id);
+    teacherName = teacher.name || '';
+  }
+
+  const created = await ScheduleEntry.create({
+    className,
+    grade: classDoc.grade || '',
+    dayOfWeek,
+    startTime,
+    endTime,
+    subject,
+    teacherId,
+    teacherName,
+    room,
+    isActive: true,
+  });
+
+  return created;
+};
+
+const createAdminScheduleEntry = async (req, res) => {
+  try {
+    const created = await createScheduleEntryCore({ actor: req.user, body: req.body, mode: 'admin' });
+    const classMetaByName = await getClassMeta([created.className]);
+    return res.status(201).json({ entry: mapScheduleEntry(created.toObject(), classMetaByName) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to create schedule entry.');
+  }
+};
+
+const createTeacherScheduleEntry = async (req, res) => {
+  try {
+    const created = await createScheduleEntryCore({ actor: req.user, body: req.body, mode: 'teacher' });
+    const classMetaByName = await getClassMeta([created.className]);
+    return res.status(201).json({ entry: mapScheduleEntry(created.toObject(), classMetaByName) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to create schedule entry.');
+  }
+};
+
+const updateScheduleEntryCore = async ({ actor, entryId, body, mode = 'admin' }) => {
+  const entry = await ScheduleEntry.findById(entryId);
+  if (!entry || entry.isActive === false) {
+    throw createHttpError('Schedule entry not found.', 404);
+  }
+
+  if (mode === 'teacher' && String(entry.teacherId) !== String(actor.id)) {
+    throw createHttpError('You are not allowed to modify this schedule entry.', 403);
+  }
+
+  const nextClassName = body?.className !== undefined ? asTrimmed(body.className) : entry.className;
+  const nextDay = body?.dayOfWeek !== undefined || body?.day !== undefined
+    ? resolveDayOfWeek(body?.dayOfWeek || body?.day)
+    : Number(entry.dayOfWeek);
+  const nextStartTime = body?.startTime !== undefined ? asTrimmed(body.startTime) : entry.startTime;
+  const nextEndTime = body?.endTime !== undefined ? asTrimmed(body.endTime) : entry.endTime;
+  const nextSubject = body?.subject !== undefined ? asTrimmed(body.subject) : entry.subject;
+  const nextRoom = body?.room !== undefined ? asTrimmed(body.room) : entry.room;
+
+  if (!nextClassName || !nextDay || !nextSubject || !nextStartTime || !nextEndTime) {
+    throw createHttpError('Schedule entry payload is incomplete.', 400);
+  }
+  if (!validateTimeRange(nextStartTime, nextEndTime)) {
+    throw createHttpError('Time range is invalid.', 400);
+  }
+
+  const classDoc = await ClassModel.findOne({ name: nextClassName }, { name: 1, grade: 1 }).lean();
+  if (!classDoc) {
+    throw createHttpError('Class not found.', 404);
+  }
+
+  if (mode === 'teacher') {
+    if (!actor.classes?.includes(nextClassName)) {
+      throw createHttpError('Class access denied.', 403);
+    }
+    if (!(actor.subjects || []).some((item) => String(item || '').toLowerCase() === nextSubject.toLowerCase())) {
+      throw createHttpError('Subject access denied.', 403);
+    }
+    entry.teacherId = actor.id;
+    entry.teacherName = actor.name || 'Teacher';
+  } else if (body?.teacherId !== undefined) {
+    const teacher = await resolveTeacherForSchedule({ teacherId: body.teacherId });
+    if (!teacher) {
+      throw createHttpError('Teacher not found.', 404);
+    }
+    if (!(teacher.classes || []).includes(nextClassName)) {
+      throw createHttpError('Teacher is not assigned to this class.', 400);
+    }
+    const allowedSubjects = teacher.subject ? [teacher.subject] : teacher.subjects || [];
+    if (!allowedSubjects.some((item) => String(item || '').toLowerCase() === nextSubject.toLowerCase())) {
+      throw createHttpError('Teacher does not own this subject.', 400);
+    }
+    entry.teacherId = teacher._id;
+    entry.teacherName = teacher.name || '';
+  }
+
+  entry.className = nextClassName;
+  entry.grade = classDoc.grade || '';
+  entry.dayOfWeek = nextDay;
+  entry.startTime = nextStartTime;
+  entry.endTime = nextEndTime;
+  entry.subject = nextSubject;
+  entry.room = nextRoom;
+  await entry.save();
+  return entry;
+};
+
+const updateAdminScheduleEntry = async (req, res) => {
+  try {
+    const entry = await updateScheduleEntryCore({
+      actor: req.user,
+      entryId: asTrimmed(req.params?.id),
+      body: req.body,
+      mode: 'admin',
+    });
+    const classMetaByName = await getClassMeta([entry.className]);
+    return res.json({ entry: mapScheduleEntry(entry.toObject(), classMetaByName) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to update schedule entry.');
+  }
+};
+
+const updateTeacherScheduleEntry = async (req, res) => {
+  try {
+    const entry = await updateScheduleEntryCore({
+      actor: req.user,
+      entryId: asTrimmed(req.params?.id),
+      body: req.body,
+      mode: 'teacher',
+    });
+    const classMetaByName = await getClassMeta([entry.className]);
+    return res.json({ entry: mapScheduleEntry(entry.toObject(), classMetaByName) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to update schedule entry.');
+  }
+};
+
+const deleteScheduleEntryCore = async ({ actor, entryId, mode = 'admin' }) => {
+  const entry = await ScheduleEntry.findById(entryId);
+  if (!entry || entry.isActive === false) {
+    throw createHttpError('Schedule entry not found.', 404);
+  }
+  if (mode === 'teacher' && String(entry.teacherId) !== String(actor.id)) {
+    throw createHttpError('You are not allowed to remove this schedule entry.', 403);
+  }
+  entry.isActive = false;
+  await entry.save();
+  return entry;
+};
+
+const deleteAdminScheduleEntry = async (req, res) => {
+  try {
+    const entry = await deleteScheduleEntryCore({
+      actor: req.user,
+      entryId: asTrimmed(req.params?.id),
+      mode: 'admin',
+    });
+    return res.json({ success: true, deletedId: String(entry._id) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to delete schedule entry.');
+  }
+};
+
+const deleteTeacherScheduleEntry = async (req, res) => {
+  try {
+    const entry = await deleteScheduleEntryCore({
+      actor: req.user,
+      entryId: asTrimmed(req.params?.id),
+      mode: 'teacher',
+    });
+    return res.json({ success: true, deletedId: String(entry._id) });
+  } catch (error) {
+    return respondWithScheduleError(res, error, 'Failed to delete schedule entry.');
+  }
+};
+
 module.exports = {
   getAdminScheduleOverview,
   getStudentWeeklySchedule,
   getTeacherWeeklySchedule,
+  createAdminScheduleEntry,
+  updateAdminScheduleEntry,
+  deleteAdminScheduleEntry,
+  createTeacherScheduleEntry,
+  updateTeacherScheduleEntry,
+  deleteTeacherScheduleEntry,
 };
