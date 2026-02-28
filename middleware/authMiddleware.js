@@ -1,6 +1,12 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { buildVerifyOptions } = require('../utils/jwtConfig');
+const {
+  canAccess,
+  normalizeUserPermissionSet,
+  resolveAdminProfileKey,
+  resolvePermissionMatrix,
+} = require('../services/rbacService');
 
 const ensureBearerToken = (authHeader = '') => {
   const [scheme, token] = String(authHeader).split(' ');
@@ -43,11 +49,18 @@ const verifyToken = async (req, res, next) => {
     req.user = {
       id: String(user._id),
       role: user.role,
+      adminProfile: user.adminProfile || 'none',
+      institutionId: user.institutionId || 'hikmah-main',
+      campusId: user.campusId || 'main-campus',
       isActive: user.isActive !== false,
       email: user.email || '',
       username: user.username || '',
       name: user.name || '',
       profilePicture: user.profilePicture || user.avatarUrl || '',
+      timezone: user.timezone || 'Asia/Dubai',
+      locale: user.locale || 'ar-AE',
+      permissions: user.permissions || [],
+      studentLifecycleState: user.studentLifecycleState || 'active',
       classes: Array.isArray(user.classes)
         ? user.role === 'student'
           ? user.classes.slice(0, 1)
@@ -63,6 +76,19 @@ const verifyToken = async (req, res, next) => {
         ? user.linkedStudentIds.map((item) => String(item))
         : [],
     };
+
+    const matrix = await resolvePermissionMatrix(req.user.institutionId);
+    if (req.user.role === 'admin') {
+      req.user.adminProfile = resolveAdminProfileKey(req.user.adminProfile, matrix);
+    }
+
+    req.user.permissionSet = normalizeUserPermissionSet({
+      role: req.user.role,
+      adminProfile: req.user.adminProfile,
+      explicitPermissions: req.user.permissions,
+      matrix,
+    });
+    req.user.permissionMatrix = matrix;
 
     return next();
   } catch (_error) {
@@ -87,6 +113,26 @@ const teacherOnly = authorize('teacher');
 const studentOnly = authorize('student');
 const parentOnly = authorize('parent');
 
+const requirePermission = (...permissions) => (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'يجب تسجيل الدخول أولاً.' });
+  }
+
+  if (!permissions.length) {
+    return next();
+  }
+
+  const hasPermission = permissions.some((permission) =>
+    canAccess(req.user.permissionSet || [], permission)
+  );
+
+  if (!hasPermission) {
+    return res.status(403).json({ message: 'ليس لديك صلاحية كافية لهذا الإجراء.' });
+  }
+
+  return next();
+};
+
 module.exports = {
   verifyToken,
   authenticate: verifyToken,
@@ -95,4 +141,5 @@ module.exports = {
   teacherOnly,
   studentOnly,
   parentOnly,
+  requirePermission,
 };

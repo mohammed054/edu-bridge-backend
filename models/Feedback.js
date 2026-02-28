@@ -105,6 +105,53 @@ const feedbackSchema = new mongoose.Schema(
       enum: ['low', 'medium', 'high'],
       default: 'low',
     },
+    ticketStatus: {
+      type: String,
+      enum: ['open', 'pending', 'resolved'],
+      default: 'open',
+      index: true,
+    },
+    ticketId: {
+      type: String,
+      default: '',
+      trim: true,
+      index: true,
+    },
+    slaDueAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    firstResponseAt: {
+      type: Date,
+      default: null,
+    },
+    resolvedAt: {
+      type: Date,
+      default: null,
+    },
+    assignedToId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    assignedToRole: {
+      type: String,
+      enum: ['admin', 'teacher', 'student', 'parent'],
+      default: '',
+    },
+    priority: {
+      type: String,
+      enum: ['p1', 'p2', 'p3'],
+      default: 'p3',
+      index: true,
+    },
+    escalationCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     trendFlags: {
       type: [String],
       default: [],
@@ -233,6 +280,11 @@ feedbackSchema.pre('validate', function syncCategoryFields(next) {
 
   if (!this.workflowStatus) {
     this.workflowStatus = 'sent';
+  }
+
+  if (!this.ticketId) {
+    const base = (this._id || new mongoose.Types.ObjectId()).toString().slice(-8).toUpperCase();
+    this.ticketId = `FDB-${base}`;
   }
 
   if (!Array.isArray(this.statusTimeline)) {

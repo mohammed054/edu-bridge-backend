@@ -61,6 +61,47 @@ const surveySchema = new mongoose.Schema(
     },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     isActive: { type: Boolean, default: true },
+    publishStatus: {
+      type: String,
+      enum: ['draft', 'published', 'unpublished', 'closed'],
+      default: 'draft',
+      index: true,
+    },
+    publishedAt: {
+      type: Date,
+      default: null,
+    },
+    unpublishedAt: {
+      type: Date,
+      default: null,
+    },
+    deadlineAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    autoCloseAtDeadline: {
+      type: Boolean,
+      default: true,
+    },
+    targetGrades: {
+      type: [String],
+      default: [],
+    },
+    targetClasses: {
+      type: [String],
+      default: [],
+    },
+    previewEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    institutionId: {
+      type: String,
+      default: 'hikmah-main',
+      trim: true,
+      index: true,
+    },
   },
   { timestamps: true }
 );

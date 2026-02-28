@@ -16,7 +16,7 @@ const notificationSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ['feedback', 'broadcast', 'schedule', 'incident', 'system'],
+      enum: ['feedback', 'broadcast', 'schedule', 'incident', 'system', 'ticket', 'risk', 'capacity', 'survey'],
       default: 'system',
       index: true,
     },
@@ -68,6 +68,58 @@ const notificationSchema = new mongoose.Schema(
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
+    },
+    workflowStatus: {
+      type: String,
+      enum: ['open', 'pending', 'resolved', 'escalated'],
+      default: 'open',
+      index: true,
+    },
+    assignedToId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    assignedToRole: {
+      type: String,
+      enum: ['admin', 'teacher', 'student', 'parent'],
+      default: null,
+    },
+    priorityWeight: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 5,
+      index: true,
+    },
+    escalationLevel: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+      index: true,
+    },
+    escalatedAt: {
+      type: Date,
+      default: null,
+    },
+    dueAt: {
+      type: Date,
+      default: null,
+    },
+    resolvedAt: {
+      type: Date,
+      default: null,
+    },
+    requiresAcknowledgement: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    acknowledgedAt: {
+      type: Date,
+      default: null,
     },
   },
   {
